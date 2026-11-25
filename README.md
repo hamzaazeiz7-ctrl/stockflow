@@ -119,3 +119,8 @@ icons/
 
 SheetJS (Apache-2.0), docx (MIT), jsPDF et jsPDF-AutoTable (MIT), police TeX Gyre Pagella pour les PDF
 (GUST Font License, équivalent libre de Book Antiqua/Palatino).
+
+## Import / export par onglet (v2.2)
+- Onglets **Articles, Entrées, Sorties, Inventaires** : boutons **Importer (Excel / CSV)**, **Modèle** (fichier Excel vide à remplir) et **Exporter** (Excel, Word, PDF).
+- Import : aperçu avant validation, lignes en erreur listées avec le numéro de ligne, copie de sécurité automatique avant import. Un PDF ne peut pas être importé (convertissez-le en Excel/CSV).
+- Nouveau fichier à déposer sur GitHub : `js/io.js` (dossier js). À remplacer : `index.html`, `sw.js`, `css/styles.css`, `js/app.js`.

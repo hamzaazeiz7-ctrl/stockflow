@@ -209,13 +209,16 @@
   const typeBadge = (t) => `<span class="badge ${t}">${SF.typeLabel(t)}</span>`;
 
   /* ---------- Articles ---------- */
-  function renderArticles() {
+  function filteredArticles() {
     const q = $('articleSearch').value.trim().toLowerCase(); const fam = $('articleFamilyFilter').value; const mode = $('articleStatusFilter').value;
-    const snaps = getSnaps(); const alertIds = new Set(getAlerts().filter((a) => a.level !== 'info').map((a) => a.articleId));
-    const rows = state.articles
+    const alertIds = new Set(getAlerts().filter((a) => a.level !== 'info').map((a) => a.articleId));
+    return state.articles
       .filter((a) => (mode === 'all') || (mode === 'archived' ? a.archived : !a.archived) && (mode !== 'alert' || alertIds.has(a.id)))
       .filter((a) => !q || [a.code, a.name, a.family, a.barcode, a.supplier, a.location].some((v) => String(v || '').toLowerCase().includes(q)))
       .filter((a) => !fam || a.family === fam).sort((a, b) => a.code.localeCompare(b.code));
+  }
+  function renderArticles() {
+    const snaps = getSnaps(); const rows = filteredArticles();
     let total = 0;
     $('articlesBody').innerHTML = rows.map((a) => { const s = snaps[a.id]; if (!a.archived) total += s.stockValue;
       return `<tr>
@@ -268,6 +271,7 @@
         : type === 'exit' ? `<div><label for="${type}Cost">CUMP courant (valorisation)</label><input type="text" id="${type}Cost" readonly /></div>`
           : `<div><label for="${type}Cost">Coût unitaire (si CUMP nul)</label><input type="number" id="${type}Cost" min="0" step="any" inputmode="decimal" /></div>`;
       $(c.panel).innerHTML = `<div class="panel-header"><h3>${c.title}</h3></div>
+        <div class="io-bar" data-iobar="${type}"></div>
         <form id="${type}Form" class="form-grid" autocomplete="off" novalidate>
           <div><label for="${type}Date">Date *</label><input type="date" id="${type}Date" required /></div>
           <div><label for="${type}Reference">Référence *</label><input type="text" id="${type}Reference" required /></div>
@@ -619,6 +623,114 @@
     commit(); toast('Application réinitialisée.', 'success');
   }
 
+  /* ======================= Import / export par onglet ======================= */
+  const IO_NAME = { articles: 'des articles', entry: 'des entrées', exit: 'des sorties', inventory: 'des inventaires' };
+  const IO_TITLE = { articles: 'Articles', entry: 'Entrées de stock', exit: 'Sorties de stock', inventory: 'Inventaires' };
+  function ioBarHtml(kind) {
+    return `<div class="io-group"><span class="io-label">Importer</span>
+        <button class="secondary-btn" type="button" data-io="open" data-kind="${kind}">⬆️ Excel / CSV</button>
+        <button class="secondary-btn" type="button" data-io="template" data-kind="${kind}">📄 Modèle</button></div>
+      <div class="io-group"><span class="io-label">Exporter</span>
+        <button class="secondary-btn" type="button" data-io="export" data-fmt="xlsx" data-kind="${kind}">Excel</button>
+        <button class="secondary-btn" type="button" data-io="export" data-fmt="docx" data-kind="${kind}">Word</button>
+        <button class="secondary-btn" type="button" data-io="export" data-fmt="pdf" data-kind="${kind}">PDF</button></div>`;
+  }
+  function tabReport(kind) {
+    if (kind === 'articles') {
+      const snaps = getSnaps(); const rows = filteredArticles().map((a) => { const s = snaps[a.id]; const st = SF.qtyStatus(a, s.quantity);
+        return { code: a.code, designation: a.name, family: a.family, unit: a.unit, location: a.location, supplier: a.supplier, quantity: s.quantity, cump: s.cump, stockValue: s.stockValue,
+          minStock: a.minStock, reorderPoint: a.reorderPoint, maxStock: a.maxStock, status: a.archived ? 'Archivé' : st.kind === 'ok' ? 'OK' : st.label }; });
+      const fam = $('articleFamilyFilter').value; const mode = $('articleStatusFilter');
+      return { id: 'articles', title: 'Liste des articles', subtitle: [mode.options[mode.selectedIndex].text, fam ? `famille ${fam}` : 'toutes familles', $('articleSearch').value.trim() ? `recherche « ${$('articleSearch').value.trim()} »` : ''].filter(Boolean).join(' · '),
+        columns: [{ key: 'code', label: 'Code', type: 'text' }, { key: 'designation', label: 'Désignation', type: 'text' }, { key: 'family', label: 'Famille', type: 'text' }, { key: 'unit', label: 'Unité', type: 'text' },
+          { key: 'location', label: 'Emplacement', type: 'text' }, { key: 'supplier', label: 'Fournisseur', type: 'text' }, { key: 'quantity', label: 'Quantité', type: 'qty' }, { key: 'cump', label: 'CUMP', type: 'money' },
+          { key: 'stockValue', label: 'Valeur du stock', type: 'money', total: true }, { key: 'minStock', label: 'Stock min.', type: 'qty' }, { key: 'reorderPoint', label: 'Point de cmd.', type: 'qty' },
+          { key: 'maxStock', label: 'Stock max.', type: 'qty' }, { key: 'status', label: 'Statut', type: 'text' }],
+        rows, totals: { stockValue: rows.reduce((s, r) => s + r.stockValue, 0) }, summary: [{ label: "Nombre d'articles", value: rows.length, type: 'int' }] };
+    }
+    const snaps = getSnaps(); const rows = [];
+    state.articles.forEach((a) => snaps[a.id].history.forEach((h) => { if (h.type !== kind) return;
+      rows.push({ date: h.date, order: h.createdOrder, reference: h.reference, code: a.code, designation: a.name, theoretical: h.theoreticalQty, quantity: h.quantity, diffQty: h.diffQty, unitCost: h.unitUsed, value: h.value, party: h.party || '', comment: h.comment || '' }); }));
+    rows.sort((x, y) => (x.date < y.date ? -1 : x.date > y.date ? 1 : x.order - y.order));
+    const base = [{ key: 'date', label: 'Date', type: 'date' }, { key: 'reference', label: 'Référence', type: 'text' }, { key: 'code', label: 'Code', type: 'text' }, { key: 'designation', label: 'Désignation', type: 'text' }];
+    const partyLabel = kind === 'entry' ? 'Fournisseur' : kind === 'exit' ? 'Destinataire / motif' : 'Compté par';
+    const tail = [{ key: 'party', label: partyLabel, type: 'text' }, { key: 'comment', label: 'Commentaire', type: 'text' }];
+    const columns = kind === 'inventory'
+      ? [...base, { key: 'theoretical', label: 'Qté théorique', type: 'qty' }, { key: 'quantity', label: 'Qté comptée', type: 'qty' }, { key: 'diffQty', label: 'Écart qté', type: 'qty' }, { key: 'value', label: "Écart valeur", type: 'money', total: true }, ...tail]
+      : [...base, { key: 'quantity', label: 'Quantité', type: 'qty' }, { key: 'unitCost', label: kind === 'exit' ? 'CUMP appliqué' : 'Coût unitaire', type: 'money' }, { key: 'value', label: 'Valeur', type: 'money', total: true }, ...tail];
+    const totalValue = rows.reduce((s, r) => s + r.value, 0);
+    return { id: kind, title: IO_TITLE[kind], subtitle: `${rows.length} ligne(s) · toutes dates`, columns, rows, totals: { value: totalValue }, summary: [{ label: 'Nombre de lignes', value: rows.length, type: 'int' }] };
+  }
+  async function exportTab(kind, fmt, btn) {
+    const rep = tabReport(kind);
+    if (!rep.rows.length) return toast('Rien à exporter pour le moment.', 'info');
+    doExport(fmt, [rep], fileBase(rep.title), btn);
+  }
+  async function downloadTemplate(kind, btn) {
+    const label = btn.textContent; btn.disabled = true; btn.textContent = '…';
+    try { download(await SFIO.template(kind, 'vendor/'), `modele_import_${SFExport.safeName(IO_TITLE[kind].toLowerCase())}.xlsx`); toast('Modèle téléchargé : remplissez-le puis importez-le.', 'success'); }
+    catch (e) { toast(e.message, 'error'); } finally { btn.disabled = false; btn.textContent = label; }
+  }
+
+  let importCtx = null; // { kind, aoa, plan, update, result }
+  function openImport(kind) { importCtx = { kind, aoa: null, plan: null, update: true, result: null }; renderImport(); openDialog('importDialog'); }
+  function renderImport() {
+    const c = importCtx; const kind = c.kind; const body = $('importBody');
+    $('importTitle').textContent = `Importer ${IO_NAME[kind]}`;
+    if (c.result) {
+      const r = c.result; const done = kind === 'articles' ? `${r.created} créé(s), ${r.updated} mis à jour` : `${r.added} ligne(s) ajoutée(s)`;
+      body.innerHTML = `<div class="import-stats"><span class="badge ok">✔ ${done}</span>${r.failed.length ? `<span class="badge alert">${r.failed.length} refusée(s)</span>` : ''}</div>
+        ${r.failed.length ? `<div class="import-sub">Lignes refusées</div><ul class="import-errors">${r.failed.slice(0, 80).map((f) => `<li>Ligne ${f.line} : ${esc(f.message)}</li>`).join('')}</ul>` : ''}
+        <p class="hint">Une copie de sécurité de vos données d'avant l'import a été conservée sur cet appareil.</p>
+        <div class="dialog-actions"><button class="primary-btn" type="button" data-close="importDialog">Terminer</button></div>`;
+      return;
+    }
+    if (!c.plan) {
+      const steps = kind === 'articles'
+        ? ['Colonnes obligatoires : <b>Code, Désignation, Famille</b> (les autres sont facultatives).', 'Un code déjà existant met l\'article à jour.']
+        : [`Colonnes obligatoires : <b>Date, Code article, ${kind === 'inventory' ? 'Quantité comptée' : 'Quantité'}</b>${kind === 'entry' ? ' et <b>Coût unitaire</b>' : ''}.`, 'Les articles doivent déjà exister (onglet Articles).', 'Dates au format JJ/MM/AAAA. Référence facultative (générée si vide).'];
+      body.innerHTML = `<div class="import-drop"><div style="font-size:2.4rem">📥</div><div><b>Excel (.xlsx, .xls) ou CSV</b></div>
+          <button class="primary-btn" type="button" data-io="pick">Choisir le fichier</button><span class="hint">Un PDF ne peut pas être importé (pas de colonnes exploitables) : enregistrez-le en Excel/CSV.</span></div>
+        <div class="import-sub">À savoir</div><ul class="import-steps">${steps.map((s) => `<li>${s}</li>`).join('')}</ul>
+        <div class="dialog-actions wrap"><button class="secondary-btn" type="button" data-io="template" data-kind="${kind}">📄 Télécharger le modèle Excel</button><button class="secondary-btn" type="button" data-close="importDialog">Annuler</button></div>`;
+      return;
+    }
+    const p = c.plan; const n = p.items.length;
+    const upd = kind === 'articles' ? p.items.filter((i) => i.action === 'update').length : 0;
+    const head = kind === 'articles' ? '<th>Ligne</th><th>Action</th><th>Article</th>' : '<th>Ligne</th><th>Date</th><th>Article</th><th class="num">Qté</th><th class="num">Coût</th>';
+    const rowsHtml = p.items.slice(0, 8).map((i) => kind === 'articles'
+      ? `<tr><td data-label="Ligne">${i.line}</td><td data-label="Action"><span class="badge ${i.action === 'create' ? 'ok' : 'warn'}">${i.action === 'create' ? 'Création' : 'Mise à jour'}</span></td><td data-label="Article">${esc(i.label)}</td></tr>`
+      : `<tr><td data-label="Ligne">${i.line}</td><td data-label="Date">${F.date(i.date)}</td><td data-label="Article">${esc(i.code)}</td><td class="num" data-label="Qté">${F.qty(i.quantity)}</td><td class="num" data-label="Coût">${kind === 'exit' ? '—' : F.money(i.unitCost)}</td></tr>`).join('');
+    body.innerHTML = `<p class="hint">Fichier : <b>${esc(c.fileName)}</b> · ${p.total} ligne(s) lue(s)</p>
+      <div class="import-stats"><span class="badge ok">✔ ${n} valide(s)${kind === 'articles' && upd ? ` (dont ${upd} mise(s) à jour)` : ''}</span>${p.errors.length ? `<span class="badge alert">✖ ${p.errors.length} à corriger</span>` : ''}</div>
+      ${kind === 'articles' ? `<label class="check"><input type="checkbox" id="importUpdate" ${c.update ? 'checked' : ''} /> Mettre à jour les articles déjà existants</label>` : ''}
+      ${p.ignoredColumns.length ? `<p class="hint">Colonnes ignorées : ${esc(p.ignoredColumns.join(', '))}</p>` : ''}
+      ${p.errors.length ? `<div class="import-sub">Lignes ignorées (corrigez-les dans le fichier puis réimportez-les)</div><ul class="import-errors">${p.errors.slice(0, 60).map((e) => `<li>Ligne ${e.line} : ${esc(e.message)}</li>`).join('')}${p.errors.length > 60 ? `<li>… et ${p.errors.length - 60} autres</li>` : ''}</ul>` : ''}
+      ${n ? `<div class="import-sub">Aperçu${n > 8 ? ' (8 premières lignes)' : ''}</div><div class="table-wrap short"><table class="rt"><thead><tr>${head}</tr></thead><tbody>${rowsHtml}</tbody></table></div>` : '<p class="empty">Aucune ligne valide à importer.</p>'}
+      <div class="dialog-actions wrap"><button class="secondary-btn" type="button" data-io="pick">Choisir un autre fichier</button>
+        <button class="primary-btn" type="button" data-io="confirm" ${n ? '' : 'disabled'}>Importer ${n} ligne(s)</button></div>`;
+    const cb = $('importUpdate'); if (cb) cb.onchange = () => { c.update = cb.checked; c.plan = SFIO.plan(state, kind, c.aoa, { update: c.update }); renderImport(); };
+  }
+  async function onImportFile(file) {
+    const c = importCtx; if (!c || !file) return;
+    try {
+      c.aoa = await SFIO.readFile(file, 'vendor/'); c.fileName = file.name;
+      c.plan = SFIO.plan(state, c.kind, c.aoa, { update: c.update });
+    } catch (e) { c.aoa = null; c.plan = null; toast(e.message, 'error'); }
+    renderImport();
+  }
+  function confirmImport() {
+    const c = importCtx; if (!c || !c.plan || !c.plan.items.length) return;
+    try { localStorage.setItem('stockflow-backup-before-import', JSON.stringify({ at: new Date().toISOString(), state })); } catch (e) { /* stockage plein : on continue */ }
+    // on rejoue le plan sur l'état actuel (il a pu changer entre-temps)
+    const fresh = SFIO.plan(state, c.kind, c.aoa, { update: c.update });
+    c.result = SFIO.apply(state, fresh);
+    const total = c.kind === 'articles' ? c.result.created + c.result.updated : c.result.added;
+    if (total) { SF.audit(state, 'Import Excel', `${IO_TITLE[c.kind]} : ${total} ligne(s)`); SF.touch(state); commit(); }
+    toast(total ? `Import terminé : ${total} ligne(s).` : 'Aucune ligne importée.', total ? 'success' : 'error');
+    renderImport();
+  }
+
   /* ======================= Événements ======================= */
   function bind() {
     $$('#navMenu .nav-link, #bottomNav button[data-view]').forEach((b) => b.addEventListener('click', () => showView(b.dataset.view)));
@@ -630,7 +742,16 @@
     ['syncChipSide', 'syncChipTop'].forEach((id) => { $(id).onclick = () => { if (!syncConfigured()) showView('settings'); else syncNow(); }; });
 
     document.addEventListener('click', (e) => {
-      const t = e.target.closest('[data-goto],[data-action],[data-close],[data-export],[data-bundle]'); if (!t) { return; }
+      const t = e.target.closest('[data-goto],[data-action],[data-close],[data-export],[data-bundle],[data-io]'); if (!t) { return; }
+      if (t.dataset.io) {
+        const io = t.dataset.io; const kind = t.dataset.kind;
+        if (io === 'open') return openImport(kind);
+        if (io === 'template') return downloadTemplate(kind, t);
+        if (io === 'export') return exportTab(kind, t.dataset.fmt, t);
+        if (io === 'pick') { $('importFile').value = ''; return $('importFile').click(); }
+        if (io === 'confirm') return confirmImport();
+        return;
+      }
       if (t.dataset.goto) return showView(t.dataset.goto);
       if (t.dataset.close) return closeDialog(t.dataset.close);
       if (t.dataset.export && currentReport) return doExport(t.dataset.export, [currentReport], fileBase(currentReport.title), t);
@@ -655,6 +776,7 @@
     });
     document.addEventListener('click', (e) => { if (e.target && e.target.id === 'welcomeDemo') seedDemo(); });
 
+    $('importFile').addEventListener('change', (e) => { const f = e.target.files[0]; if (f) onImportFile(f); });
     $('articleForm').addEventListener('submit', submitArticle);
     ['articleInitialQty', 'articleInitialCost'].forEach((id) => $(id).addEventListener('input', computeInitialValue));
     $('movementForm').addEventListener('submit', submitMovementEdit);
@@ -689,8 +811,12 @@
 
   /* ======================= Démarrage ======================= */
   function init() {
-    buildMoveForms(); bind();
-    $('versionInfo').textContent = 'StockFlow v2.0';
+    buildMoveForms(); $$('[data-iobar]').forEach((el) => { el.innerHTML = ioBarHtml(el.dataset.iobar); }); bind();
+    $('versionInfo').textContent = 'StockFlow v2.2';
+    // Téléphone : la barre du bas se masque quand le clavier est ouvert (sinon elle recouvre le champ de saisie)
+    let kbTimer; const isField = (t) => t && /^(INPUT|SELECT|TEXTAREA)$/.test(t.tagName) && !['checkbox', 'radio', 'range', 'button', 'file'].includes(t.type);
+    document.addEventListener('focusin', (e) => { if (isField(e.target)) { clearTimeout(kbTimer); document.body.classList.add('kb-open'); } });
+    document.addEventListener('focusout', () => { clearTimeout(kbTimer); kbTimer = setTimeout(() => { if (!isField(document.activeElement)) document.body.classList.remove('kb-open'); }, 150); });
     cache = {}; renderLists();
     const start = location.hash.slice(1); showView(VIEWS[start] ? start : 'dashboard', false);
     renderAll();

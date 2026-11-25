@@ -96,6 +96,7 @@
             <h3>Articles</h3>
             <button class="primary-btn" data-action="new-article">+ Nouvel article</button>
           </div>
+          <div class="io-bar" data-iobar="articles"></div>
           <div class="toolbar">
             <input type="search" id="articleSearch" placeholder="Rechercher code, désignation, famille, code-barres…" />
             <select id="articleFamilyFilter"><option value="">Toutes les familles</option></select>
@@ -389,6 +390,15 @@
     </form>
   </dialog>
 
+  <!-- Import Excel / CSV -->
+  <dialog id="importDialog">
+    <div class="dialog-form">
+      <div class="dialog-head"><h3 id="importTitle">Importer</h3><button class="icon-btn" type="button" data-close="importDialog" aria-label="Fermer">✕</button></div>
+      <div id="importBody"></div>
+      <input type="file" id="importFile" accept=".xlsx,.xls,.csv,.txt,.pdf" hidden />
+    </div>
+  </dialog>
+
   <!-- Conflit de synchronisation -->
   <dialog id="conflictDialog">
     <div class="dialog-form">
@@ -419,6 +429,7 @@
   <script src="js/core.js"></script>
   <script src="js/sync.js"></script>
   <script src="js/exports.js"></script>
+  <script src="js/io.js"></script>
   <script src="js/app.js"></script>
 </body>
 </html>
