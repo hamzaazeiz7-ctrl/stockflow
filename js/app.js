@@ -7,19 +7,41 @@
   const UI_KEY = 'stockflow-ui-v1';
   const SYNC_KEY = 'stockflow-sync-v1';
   const BACKUP_KEY = 'stockflow-backup-before-replace';
+  const REG_KEY = 'stockflow-reg-v1';
+  const CO_PREFIX = 'stockflow-co-v1-';
+  const SESSION_KEY = 'stockflow-session-v1';
+  const Auth = SFAuth;
 
   /* ======================= Persistance ======================= */
   const readJson = (key, fallback) => { try { const r = localStorage.getItem(key); return r ? { ...fallback, ...JSON.parse(r) } : { ...fallback }; } catch (e) { return { ...fallback }; } };
   const writeJson = (key, val) => { try { localStorage.setItem(key, JSON.stringify(val)); return true; } catch (e) { return false; } };
 
-  function loadState() {
-    try { const raw = localStorage.getItem(SF.STORAGE_KEY); return raw ? SF.normalizeState(JSON.parse(raw)) : SF.defaultState(); }
-    catch (e) { console.error(e); return SF.defaultState(); }
+  const readRaw = (k) => { try { const r = localStorage.getItem(k); return r ? JSON.parse(r) : null; } catch (e) { return null; } };
+  let migratedFromLegacy = false;
+  function loadRegistry() {
+    const raw = readRaw(REG_KEY);
+    if (raw) return Auth.normalizeRegistry(raw);
+    const r = Auth.defaultRegistry(); const legacy = readRaw(SF.STORAGE_KEY);
+    const st = legacy ? SF.normalizeState(legacy) : SF.defaultState();
+    const c = Auth.addCompany(r, (st.company && st.company.name) || 'Ma société');
+    writeJson(CO_PREFIX + c.id, st); writeJson(REG_KEY, r); migratedFromLegacy = !!legacy;
+    return r;
   }
-  let state = loadState();
+  let reg = loadRegistry();
+  function loadCompany(id) {
+    const raw = readRaw(CO_PREFIX + id); const st = raw ? SF.normalizeState(raw) : SF.defaultState();
+    const co = reg.companies.find((c) => c.id === id); if (co) st.company.name = co.name;
+    return st;
+  }
+  const ui = readJson(UI_KEY, { theme: null, scale: 100, companyId: null });
+  let companyId = (reg.companies.find((c) => c.id === ui.companyId && !c.archived) || reg.companies.find((c) => !c.archived) || reg.companies[0]).id;
+  let state = loadCompany(companyId);
   let F = SF.makeFmt(state.settings);
-  const ui = readJson(UI_KEY, { theme: null, scale: 100 });
-  const sync = readJson(SYNC_KEY, { owner: '', repo: '', branch: '', path: 'stockflow-data.json', token: '', passphrase: '', remember: false, auto: true, lastSha: null, dirty: false, lastSyncAt: null });
+  const sync = readJson(SYNC_KEY, { owner: '', repo: '', branch: '', path: 'stockflow-workspace.json', token: '', passphrase: '', remember: false, auto: true, lastSha: null, dirty: false, lastSyncAt: null });
+  if (migratedFromLegacy && sync.owner && sync.repo && sync.token) { // l'ancien fichier GitHub reste intact (copie de secours) ; le nouvel espace de travail utilise un autre fichier
+    if (!sync.path || sync.path === 'stockflow-data.json') sync.path = 'stockflow-workspace.json';
+    sync.lastSha = null; sync.dirty = true; writeJson(SYNC_KEY, sync);
+  }
   let sessionPass = '';
   let storageWarned = false;
   let cache = null;
@@ -29,13 +51,15 @@
   let pending = {}; // seuils modifiés non enregistrés : { articleId: { champ: valeur } }
 
   function saveLocal() {
-    if (!writeJson(SF.STORAGE_KEY, state) && !storageWarned) { storageWarned = true; toast("Impossible d'enregistrer sur cet appareil (stockage plein ou bloqué). Exportez une sauvegarde JSON.", 'error'); }
+    if (!writeJson(CO_PREFIX + companyId, state) && !storageWarned) { storageWarned = true; toast("Impossible d'enregistrer sur cet appareil (stockage plein ou bloqué). Exportez une sauvegarde JSON.", 'error'); }
   }
   const saveSync = () => writeJson(SYNC_KEY, sync);
+  const saveReg = () => writeJson(REG_KEY, reg);
   const saveUi = () => writeJson(UI_KEY, ui);
   const syncConfigured = () => !!(sync.owner && sync.repo && sync.token);
 
   function commit() { saveLocal(); markDirty(); renderAll(); }
+  function commitReg() { Auth.touchReg(reg); saveReg(); markDirty(); enforceSession(); renderAll(); }
   let dirtyRev = 0;
   function markDirty() {
     dirtyRev += 1;
@@ -99,11 +123,13 @@
     movements: ['Mouvements', 'Historique chronologique complet et traçable.'],
     alerts: ['Alertes & seuils', 'Configuration manuelle des seuils et suivi des alertes.'],
     reports: ['États & exports', 'États de stock, exports Excel, Word et PDF.'],
-    settings: ['Paramètres', 'Société, affichage, règles, synchronisation et données.']
+    settings: ['Paramètres', 'Société, affichage, règles, synchronisation et données.'],
+    admin: ['Sociétés & utilisateurs', 'Gérez les sociétés, les comptes, les rôles et les droits.']
   };
 
   function showView(view, push = true) {
     if (!VIEWS[view]) view = 'dashboard';
+    if (sessionUserId && !viewAllowed(view)) view = firstAllowedView();
     currentView = view;
     $$('.view').forEach((v) => v.classList.toggle('active', v.id === `${view}View`));
     $$('#navMenu .nav-link, #bottomNav button[data-view]').forEach((b) => b.classList.toggle('active', b.dataset.view === view));
@@ -117,12 +143,105 @@
   const openDrawer = () => document.body.classList.add('drawer-open');
   const closeDrawer = () => document.body.classList.remove('drawer-open');
 
+
+  /* ======================= Session, droits, sociétés ======================= */
+  let sessionUserId = null;
+  const me = () => reg.users.find((u) => u.id === sessionUserId && u.active) || null;
+  const can = (perm) => (perm === 'admin' ? Auth.isAdmin(me()) : Auth.can(me(), perm));
+  const canAny = (list) => String(list).split(' ').some(can);
+  function need(perm, msg) { if (can(perm)) return true; toast(msg || "Action non autorisée pour votre profil.", 'error'); return false; }
+  const VIEW_PERM = { dashboard: 'view', articles: 'view', movements: 'view', alerts: 'view', reports: 'view', entries: 'entries', exits: 'exits', inventories: 'inventories', settings: 'settings sync', admin: 'admin' };
+  const viewAllowed = (v) => !!VIEW_PERM[v] && canAny(VIEW_PERM[v]);
+  const firstAllowedView = () => ['dashboard', 'entries', 'exits', 'inventories', 'settings', 'admin'].find(viewAllowed) || 'dashboard';
+  const coName = () => (reg.companies.find((c) => c.id === companyId) || {}).name || '';
+
+  function applyPerms() {
+    $$('[data-perm]').forEach((el) => { el.hidden = !can(el.dataset.perm); });
+    $$('[data-perm-any]').forEach((el) => { el.hidden = !canAny(el.dataset.permAny); });
+  }
+  function updateUserBox() {
+    const u = me(); $('userBox').hidden = !u; if (!u) return;
+    $('userName').textContent = u.name; $('userRoleLabel').textContent = Auth.roleLabel(u.role);
+    const list = Auth.visibleCompanies(reg, u);
+    $('companySwitch').hidden = list.length < 2;
+    $('companySelect').innerHTML = list.map((c) => `<option value="${esc(c.id)}">${esc(c.name)}</option>`).join(''); $('companySelect').value = companyId;
+    $('coLine').textContent = coName();
+  }
+  function resetReportView() {
+    currentReport = null; ['reportHead', 'reportBody', 'reportFoot', 'reportSummary'].forEach((id) => { $(id).innerHTML = ''; });
+    $('reportTitle').textContent = 'Résultat'; $('reportSubtitle').textContent = ' ';
+    $$('#reportResult [data-export], #printBtn').forEach((b) => { b.disabled = true; });
+  }
+  function switchCompany(id, silent) {
+    if (id === companyId || !reg.companies.some((c) => c.id === id)) return;
+    saveLocal(); companyId = id; ui.companyId = id; saveUi();
+    state = loadCompany(id); F = SF.makeFmt(state.settings); cache = {}; pending = {}; resetReportView(); movementLimit = 200;
+    ['entry', 'exit', 'inventory'].forEach((t) => { ['Reference', 'Article', 'Qty', 'Cost', 'Party', 'Comment'].forEach((f) => { const el = $(`${t}${f}`); if (el) el.value = ''; }); });
+    if (!silent) { renderAll(); toast(`Société active : ${coName()}`, 'info'); }
+  }
+  function ensureCompany() {
+    const u = me(); if (!u) return;
+    const list = Auth.visibleCompanies(reg, u);
+    if (list.length && !list.some((c) => c.id === companyId)) switchCompany(list[0].id, true);
+  }
+  function enforceSession() { // après chaque changement des comptes (ici ou via synchronisation)
+    if (!sessionUserId) return true;
+    const u = me();
+    if (!u) { toast("Votre accès a été retiré ou bloqué par l'administrateur.", 'error'); endSession(); showAuth(); return false; }
+    if (!Auth.visibleCompanies(reg, u).length) { toast("Aucune société ne vous est attribuée.", 'error'); endSession(); showAuth(); return false; }
+    SF.setActor(u.name); ensureCompany(); applyPerms(); updateUserBox();
+    if (!viewAllowed(currentView)) showView(firstAllowedView(), false);
+    return true;
+  }
+  function readSession() {
+    try { const r = JSON.parse(localStorage.getItem(SESSION_KEY) || sessionStorage.getItem(SESSION_KEY) || 'null'); return r && r.userId; } catch (e) { return null; }
+  }
+  function startSession(user, remember) {
+    sessionUserId = user.id; SF.setActor(user.name);
+    try { localStorage.removeItem(SESSION_KEY); sessionStorage.removeItem(SESSION_KEY); (remember ? localStorage : sessionStorage).setItem(SESSION_KEY, JSON.stringify({ userId: user.id, at: Date.now() })); } catch (e) { /* ignore */ }
+  }
+  function endSession() { sessionUserId = null; SF.setActor(''); try { localStorage.removeItem(SESSION_KEY); sessionStorage.removeItem(SESSION_KEY); } catch (e) { /* ignore */ } }
+  function showAuth() {
+    document.body.classList.add('locked'); closeDrawer();
+    const first = !reg.users.length; $('setupForm').hidden = !first; $('loginForm').hidden = first; $('authSyncBox').hidden = true;
+    ['loginPass', 'setupPass', 'setupPass2'].forEach((id) => { $(id).value = ''; }); ['loginError', 'setupError', 'asError'].forEach((id) => { $(id).textContent = ''; });
+    setTimeout(() => $(first ? 'setupName' : 'loginUser').focus(), 80);
+  }
+  function enterApp() {
+    if (!me()) return showAuth();
+    document.body.classList.remove('locked'); ensureCompany(); applyPerms(); updateUserBox();
+    const want = location.hash.slice(1); showView(viewAllowed(want) ? want : firstAllowedView(), false); renderAll();
+  }
+  async function doLogin(e) {
+    e.preventDefault(); const btn = e.submitter || $('loginForm').querySelector('button[type=submit]'); btn.disabled = true; $('loginError').textContent = '';
+    try { const u = await Auth.login(reg, $('loginUser').value, $('loginPass').value); saveReg(); startSession(u, $('loginRemember').checked); $('loginPass').value = ''; enterApp(); }
+    catch (err) { $('loginError').textContent = err.message; saveReg(); await new Promise((r) => setTimeout(r, 600)); }
+    finally { btn.disabled = false; }
+  }
+  async function doSetup(e) {
+    e.preventDefault(); $('setupError').textContent = '';
+    try {
+      if ($('setupPass').value !== $('setupPass2').value) throw new Error('Les deux mots de passe ne correspondent pas.');
+      const u = await Auth.createUser(reg, { name: $('setupName').value, username: $('setupUser').value, password: $('setupPass').value, role: 'admin' });
+      Auth.logEvent(reg, u.name, 'Compte administrateur créé'); saveReg(); markDirty(); startSession(u, true); enterApp(); toast(`Bienvenue ${u.name}. Ajoutez vos sociétés et utilisateurs dans « Sociétés & utilisateurs ».`, 'success');
+    } catch (err) { $('setupError').textContent = err.message; }
+  }
+  async function authSyncRun() {
+    $('asError').textContent = '';
+    Object.assign(sync, { owner: $('asOwner').value.trim(), repo: $('asRepo').value.trim().replace(/\.git$/, ''), token: $('asToken').value.trim(), path: 'stockflow-workspace.json', lastSha: null, dirty: false });
+    sessionPass = $('asPass').value; if (!syncConfigured() || !sessionPass) { $('asError').textContent = 'Renseignez le propriétaire, le dépôt, le jeton et la phrase secrète.'; return; }
+    saveSync(); await syncNow({ silent: false });
+    if (syncState === 'error') { $('asError').textContent = syncMsg; return; }
+    if (sessionUserId) return; showAuth(); if (!reg.users.length) $('asError').textContent = 'Aucun compte trouvé sur GitHub : créez le compte administrateur.';
+  }
+
   /* ======================= Rendu ======================= */
   function renderAll() {
     cache = {};
     F = SF.makeFmt(state.settings);
     applyUi();
-    $('brandName').textContent = state.company.name || 'StockFlow';
+    $('brandName').textContent = 'StockFlow';
+    applyPerms(); updateUserBox(); fillIoBars();
     renderLists();
     renderBadges();
     renderCurrent();
@@ -131,7 +250,7 @@
   function renderCurrent() {
     cache ||= {};
     ({ dashboard: renderDashboard, articles: renderArticles, entries: () => renderMoveView('entry'), exits: () => renderMoveView('exit'), inventories: () => renderMoveView('inventory'),
-      movements: renderMovements, alerts: renderAlertsView, reports: renderReportsView, settings: renderSettings }[currentView] || (() => {}))();
+      movements: renderMovements, alerts: renderAlertsView, reports: renderReportsView, settings: renderSettings, admin: renderAdmin }[currentView] || (() => {}))();
   }
 
   function renderLists() {
@@ -170,7 +289,7 @@
     const monthMoves = state.movements.filter((m) => m.date.startsWith(month));
     const cur = esc(state.settings.currency || '');
     $('welcomeBox').innerHTML = !state.articles.length ? `<div class="welcome"><h3>Bienvenue 👋</h3><p>Commencez par créer vos articles (code, désignation, famille, stock initial et seuils d'alerte), puis saisissez vos entrées et sorties : le CUMP est calculé automatiquement.</p>
-      <div class="actions-inline"><button class="primary-btn" data-action="new-article">+ Créer mon premier article</button><button class="secondary-btn" id="welcomeDemo">Voir avec des données de démonstration</button><button class="ghost-btn" data-goto="settings">Configurer la synchronisation</button></div></div>` : '';
+      <div class="actions-inline">${can('articles_edit') ? '<button class="primary-btn" data-action="new-article">+ Créer mon premier article</button>' : ''}${can('admin') ? '<button class="secondary-btn" id="welcomeDemo">Voir avec des données de démonstration</button>' : ''}${can('sync') ? '<button class="ghost-btn" data-goto="settings">Configurer la synchronisation</button>' : ''}</div></div>` : '';
     const cards = [
       ['Articles actifs', arts.length, `${state.articles.length - arts.length} archivé(s)`, '', 'articles'],
       ['Valeur du stock', `${F.money(totalValue)} <small>${cur}</small>`, 'Valorisation au CUMP', '', 'reports'],
@@ -227,15 +346,15 @@
         <td data-label="Famille">${esc(a.family)}</td><td data-label="Unité">${esc(a.unit)}</td>
         <td class="num" data-label="Qté">${F.qty(s.quantity)}</td><td class="num" data-label="CUMP">${F.money(s.cump)}</td><td class="num" data-label="Valeur">${F.money(s.stockValue)}</td>
         <td class="num" data-label="Min">${F.qty(a.minStock)}</td><td data-label="Statut">${a.archived ? '' : statusBadge(a, s.quantity)}</td>
-        <td class="actions"><button class="mini-btn" data-action="edit-article" data-id="${esc(a.id)}">Éditer</button>
-          <button class="mini-btn" data-action="${a.archived ? 'restore-article' : 'archive-article'}" data-id="${esc(a.id)}">${a.archived ? 'Réactiver' : 'Archiver'}</button>
-          <button class="mini-btn" data-action="delete-article" data-id="${esc(a.id)}">Supprimer</button></td></tr>`; }).join('')
+        <td class="actions">${can('articles_edit') ? `<button class="mini-btn" data-action="edit-article" data-id="${esc(a.id)}">Éditer</button>
+          <button class="mini-btn" data-action="${a.archived ? 'restore-article' : 'archive-article'}" data-id="${esc(a.id)}">${a.archived ? 'Réactiver' : 'Archiver'}</button>` : ''}${can('articles_delete') ? `<button class="mini-btn" data-action="delete-article" data-id="${esc(a.id)}">Supprimer</button>` : ''}</td></tr>`; }).join('')
       || `<tr><td colspan="10" class="empty">${state.articles.length ? 'Aucun article ne correspond.' : 'Aucun article. Cliquez sur « + Nouvel article ».'}</td></tr>`;
     $('articlesFoot').innerHTML = rows.length ? `<tr><td colspan="6" data-label="">${rows.length} article(s)</td><td class="num" data-label="Valeur totale">${F.money(total)}</td><td colspan="3" data-label=""></td></tr>` : '';
   }
 
   /* ---------- Fiche article ---------- */
   function openArticleDialog(id) {
+    if (!need('articles_edit')) return;
     const a = id ? getArticle(id) : null; $('articleError').textContent = '';
     $('articleDialogTitle').textContent = a ? `Modifier l'article ${a.code}` : 'Nouvel article';
     const set = (k, v) => { $(k).value = v ?? ''; };
@@ -248,7 +367,7 @@
   }
   function computeInitialValue() { $('articleInitialValue').value = F.money(SF.num($('articleInitialQty').value) * SF.num($('articleInitialCost').value)); }
   function submitArticle(e) {
-    e.preventDefault();
+    e.preventDefault(); if (!need('articles_edit')) return;
     const g = (id) => $(id).value;
     const data = { code: g('articleCode').trim(), name: g('articleName').trim(), family: g('articleFamily').trim(), unit: g('articleUnit').trim(), barcode: g('articleBarcode').trim(), location: g('articleLocation').trim(), supplier: g('articleSupplier').trim(),
       initialQty: SF.num(g('articleInitialQty')), initialCost: SF.num(g('articleInitialCost')), minStock: SF.num(g('articleMinStock')), reorderPoint: SF.num(g('articleReorderPoint')), maxStock: SF.num(g('articleMaxStock')), reorderQty: SF.num(g('articleReorderQty')) };
@@ -317,6 +436,7 @@
   }
 
   function submitMove(type) {
+    if (!need({ entry: 'entries', exit: 'exits', inventory: 'inventories' }[type])) return;
     const err = $(`${type}Error`); err.textContent = '';
     const art = resolveArticle($(`${type}Article`).value);
     if (!art) { err.textContent = 'Veuillez sélectionner un article valide dans la liste.'; return; }
@@ -360,12 +480,13 @@
         <td class="num" data-label="Qté">${qty}</td><td class="num" data-label="Coût unit.">${F.money(h.unitUsed || 0)}</td><td class="num" data-label="Valeur">${F.money(h.value || 0)}</td>
         <td class="num" data-label="Stock après">${F.qty(h.qtyAfter || 0)}</td><td class="num" data-label="CUMP">${F.money(h.cumpAfter || 0)}</td>
         <td data-label="Tiers / Comm.">${esc(m.party)}${m.comment ? `<small>${esc(m.comment)}</small>` : ''}</td>
-        <td class="actions"><button class="mini-btn" data-action="edit-movement" data-id="${esc(m.id)}">Éditer</button><button class="mini-btn" data-action="delete-movement" data-id="${esc(m.id)}">Supprimer</button></td></tr>`; }).join('');
+        <td class="actions">${can('movements_edit') ? `<button class="mini-btn" data-action="edit-movement" data-id="${esc(m.id)}">Éditer</button><button class="mini-btn" data-action="delete-movement" data-id="${esc(m.id)}">Supprimer</button>` : ''}</td></tr>`; }).join('');
     $('movementsBody').innerHTML = (rows || '<tr><td colspan="11" class="empty">Aucun mouvement trouvé.</td></tr>')
       + (all.length > movementLimit ? `<tr><td colspan="11" class="empty"><button class="secondary-btn" data-action="more-movements">Afficher plus (${all.length - movementLimit} restants)</button></td></tr>` : '');
   }
 
   function openMovementDialog(id) {
+    if (!need('movements_edit')) return;
     const m = state.movements.find((x) => x.id === id); if (!m) return;
     const a = getArticle(m.articleId); $('mvError').textContent = '';
     $('mvId').value = m.id; $('movementDialogTitle').textContent = `Modifier ${SF.typeLabel(m.type).toLowerCase()} ${m.reference}`;
@@ -376,7 +497,7 @@
     openDialog('movementDialog');
   }
   function submitMovementEdit(e) {
-    e.preventDefault();
+    e.preventDefault(); if (!need('movements_edit')) return;
     try {
       const r = SF.updateMovement(state, $('mvId').value, { date: $('mvDate').value, reference: $('mvReference').value, quantity: $('mvQty').value, unitCost: $('mvCost').value, party: $('mvParty').value, comment: $('mvComment').value });
       commit(); closeDialog('movementDialog'); toast('Mouvement modifié, stock recalculé.', 'success'); if (r.warning) toast(r.warning, 'info');
@@ -399,7 +520,7 @@
     const rows = SF.activeArticles(state).filter((a) => (!fam || a.family === fam) && (!q || `${a.code} ${a.name} ${a.family}`.toLowerCase().includes(q)) && (!only || alertIds.has(a.id)));
     $('thresholdsBody').innerHTML = rows.map((a) => { const s = snaps[a.id];
       const inp = (f, label) => { const orig = a[f]; const pv = pending[a.id] && pending[a.id][f] !== undefined ? pending[a.id][f] : orig;
-        return `<td data-label="${label}"><input class="th-input ${Number(pv) !== Number(orig) ? 'changed' : ''}" type="number" min="0" step="any" inputmode="decimal" data-id="${esc(a.id)}" data-field="${f}" data-orig="${orig}" value="${pv}" aria-label="${label} ${esc(a.code)}" /></td>`; };
+        return `<td data-label="${label}"><input class="th-input ${Number(pv) !== Number(orig) ? 'changed' : ''}" type="number" min="0" step="any" inputmode="decimal" ${can('thresholds') ? '' : 'disabled'} data-id="${esc(a.id)}" data-field="${f}" data-orig="${orig}" value="${pv}" aria-label="${label} ${esc(a.code)}" /></td>`; };
       return `<tr><td class="title" data-label="Code"><b>${esc(a.code)}</b></td><td data-label="Désignation">${esc(a.name)}<small>${esc(a.family)}</small></td><td class="num" data-label="Stock actuel">${qtyU(s.quantity, a)}</td>
         ${inp('minStock', 'Minimum')}${inp('reorderPoint', 'Pt de commande')}${inp('maxStock', 'Maximum')}${inp('reorderQty', 'Qté réappro')}<td data-label="Statut">${statusBadge(a, s.quantity)}</td></tr>`; }).join('')
       || '<tr><td colspan="8" class="empty">Aucun article à afficher.</td></tr>';
@@ -414,6 +535,7 @@
     if (Number(a[field]) === pv) { delete pending[id][field]; if (!Object.keys(pending[id]).length) delete pending[id]; } else pending[id][field] = pv;
   }
   function saveThresholds() {
+    if (!need('thresholds')) return;
     const ids = Object.keys(pending); if (!ids.length) return;
     for (const id of ids) {
       const a = getArticle(id); const v = { minStock: a.minStock, reorderPoint: a.reorderPoint, maxStock: a.maxStock, reorderQty: a.reorderQty, ...pending[id] };
@@ -427,6 +549,7 @@
     pending = {}; commit(); toast(`Seuils enregistrés (${ids.length} article(s)).`, 'success');
   }
   function bulkApply() {
+    if (!need('thresholds')) return;
     const fam = $('bulkFamily').value; const field = $('bulkField').value; const raw = $('bulkValue').value;
     if (raw === '' || !(Number(raw) >= 0)) return toast('Saisissez une valeur positive à appliquer.', 'error');
     const only = $('bulkOnlyEmpty').checked; let n = 0;
@@ -493,6 +616,7 @@
     setTimeout(() => { a.remove(); URL.revokeObjectURL(url); }, 4000);
   }
   async function doExport(kind, reports, base, btn) {
+    if (!need('export')) return;
     const label = btn ? btn.textContent : ''; if (btn) { btn.disabled = true; btn.textContent = '… génération'; }
     try {
       const ctx = { company: state.company, fmt: F, vendorBase: 'vendor/' };
@@ -508,7 +632,7 @@
     $('settingDecimals').value = String(state.settings.decimals); $('settingQtyDecimals').value = String(state.settings.qtyDecimals); $('settingCurrency').value = state.settings.currency; $('settingNegativeMode').value = state.settings.negativeMode;
     $('syncOwner').value = sync.owner; $('syncRepo').value = sync.repo; $('syncBranch').value = sync.branch; $('syncPath').value = sync.path; $('syncToken').value = sync.token;
     $('syncPass').value = sync.remember ? sync.passphrase : sessionPass; $('syncRemember').checked = !!sync.remember; $('syncAuto').checked = !!sync.auto;
-    $('auditBody').innerHTML = state.audit.map((r) => `<tr><td data-label="Date">${new Date(r.timestamp).toLocaleString('fr-FR')}</td><td data-label="Action">${esc(r.action)}</td><td data-label="Détail">${esc(r.detail)}</td></tr>`).join('') || '<tr><td colspan="3" class="empty">Aucune trace.</td></tr>';
+    $('auditBody').innerHTML = state.audit.map((r) => `<tr><td data-label="Date">${new Date(r.timestamp).toLocaleString('fr-FR')}</td><td data-label="Utilisateur">${esc(r.by || '')}</td><td data-label="Action">${esc(r.action)}</td><td data-label="Détail">${esc(r.detail)}</td></tr>`).join('') || '<tr><td colspan="3" class="empty">Aucune trace.</td></tr>';
     updateSyncChip();
   }
 
@@ -536,7 +660,7 @@
     const p = await askPassphrase(); if (p) sessionPass = p; return p;
   }
   function askConflict(info) {
-    const box = (t, s) => `<div class="info-box"><b>${t}</b>${s.articles.length} article(s) · ${s.movements.length} mouvement(s)<br>Dernière modification : ${s.meta && s.meta.updatedAt ? new Date(s.meta.updatedAt).toLocaleString('fr-FR') : 'inconnue'}</div>`;
+    const box = (t, s) => { const n = Auth.bundleCounts(s); return `<div class="info-box"><b>${t}</b>${n.companies} société(s) · ${n.articles} article(s) · ${n.movements} mouvement(s) · ${n.users} utilisateur(s)<br>Dernière modification : ${s.meta && s.meta.updatedAt ? new Date(s.meta.updatedAt).toLocaleString('fr-FR') : 'inconnue'}</div>`; };
     setSyncState('conflict', 'Choix requis');
     $('conflictText').textContent = info.firstSync ? 'Cet appareil contient déjà des données et le dépôt GitHub aussi. Lesquelles conserver ?' : 'Les données ont été modifiées à la fois ici et sur un autre appareil. Lesquelles conserver ?';
     $('conflictInfo').innerHTML = box('Cet appareil', info.local) + box('Version GitHub', info.remote);
@@ -546,8 +670,21 @@
       dlg.querySelectorAll('[data-conflict]').forEach((b) => { b.onclick = () => finish(b.dataset.conflict); }); openDialog('conflictDialog');
     });
   }
+  function buildBundle() {
+    const companies = {}; reg.companies.forEach((c) => { companies[c.id] = c.id === companyId ? state : loadCompany(c.id); });
+    const b = { kind: 'stockflow-workspace', v: 1, registry: reg, companies, meta: {} };
+    b.meta.updatedAt = Auth.bundleUpdatedAt(b); return b;
+  }
+  function applyBundle(b) {
+    reg = b.registry; const keep = new Set(reg.companies.map((c) => c.id));
+    for (let i = localStorage.length - 1; i >= 0; i--) { const k = localStorage.key(i); if (k && k.startsWith(CO_PREFIX) && !keep.has(k.slice(CO_PREFIX.length))) localStorage.removeItem(k); }
+    reg.companies.forEach((c) => writeJson(CO_PREFIX + c.id, b.companies[c.id])); saveReg();
+    const list = me() ? Auth.visibleCompanies(reg, me()) : reg.companies.filter((c) => !c.archived);
+    companyId = (list.find((c) => c.id === companyId) || list[0] || reg.companies[0]).id; ui.companyId = companyId; saveUi();
+    state = loadCompany(companyId); F = SF.makeFmt(state.settings); cache = {}; pending = {};
+  }
   function replaceState(next) { Object.keys(state).forEach((k) => delete state[k]); Object.assign(state, next); }
-  function backupLocal() { try { localStorage.setItem(BACKUP_KEY, JSON.stringify({ at: new Date().toISOString(), state })); } catch (e) { /* ignore */ } }
+  function backupLocal() { try { localStorage.setItem(BACKUP_KEY, JSON.stringify({ at: new Date().toISOString(), bundle: buildBundle() })); } catch (e) { /* ignore */ } }
 
   async function syncNow(opts = {}) {
     if (!syncConfigured()) { if (!opts.silent) { toast('Configurez d\'abord la synchronisation (Paramètres).', 'info'); showView('settings'); } return; }
@@ -557,10 +694,10 @@
     if (!pass) { setSyncState(sync.dirty ? 'pending' : 'ok', opts.silent ? 'Phrase secrète requise : cliquez sur le nuage.' : ''); return; }
     syncing = true; setSyncState('syncing'); const rev = dirtyRev;
     try {
-      const r = await SFSync.run({ cfg: sync, passphrase: pass, localState: state, lastSha: sync.lastSha, dirty: sync.dirty, normalize: SF.normalizeState, askConflict });
+      const r = await SFSync.run({ cfg: sync, passphrase: pass, localState: buildBundle(), lastSha: sync.lastSha, dirty: sync.dirty, normalize: Auth.normalizeBundle, isEmpty: Auth.isEmptyBundle, askConflict });
       if (r.action === 'pulled') {
-        backupLocal(); replaceState(r.state); saveLocal(); sync.lastSha = r.sha; sync.dirty = false; pending = {};
-        toast('Données mises à jour depuis GitHub.', 'success'); renderAll();
+        backupLocal(); applyBundle(r.state); sync.lastSha = r.sha; sync.dirty = false;
+        toast('Données mises à jour depuis GitHub.', 'success'); if (enforceSession() !== false) renderAll();
       } else if (r.action === 'created' || r.action === 'pushed') {
         sync.lastSha = r.sha; sync.dirty = rev !== dirtyRev; if (!opts.silent) toast('Données envoyées sur GitHub.', 'success');
       } else if (r.action === 'none') { sync.lastSha = r.sha; if (!opts.silent) toast('Déjà à jour.', 'info'); }
@@ -596,44 +733,171 @@
 
   /* ======================= Données ======================= */
   function exportJson() {
+    if (!need('settings')) return;
     download(new Blob([JSON.stringify(state, null, 2)], { type: 'application/json' }), `sauvegarde_stockflow_${SF.today()}.json`);
   }
   function importJson(file) {
+    if (!need('admin')) return;
     const reader = new FileReader();
     reader.onload = () => {
       try {
         const imported = JSON.parse(reader.result);
+        if (imported.kind === 'stockflow-workspace') {
+          if (!confirm('Remplacer TOUTES les sociétés, comptes et données de cet appareil par cette sauvegarde complète ?\nUne copie de sécurité sera conservée.')) return;
+          backupLocal(); applyBundle(Auth.normalizeBundle(imported)); Auth.touchReg(reg); saveReg(); markDirty();
+          if (enforceSession() !== false) { renderAll(); toast('Sauvegarde complète restaurée.', 'success'); } return;
+        }
         if (!Array.isArray(imported.articles) || !Array.isArray(imported.movements)) throw new Error('Format JSON invalide : ce fichier n\'est pas une sauvegarde StockFlow.');
         if ((state.articles.length || state.movements.length) && !confirm(`Remplacer les données actuelles par la sauvegarde (${imported.articles.length} articles, ${imported.movements.length} mouvements) ?\nUne copie de sécurité de cet appareil sera conservée.`)) return;
-        backupLocal(); replaceState(SF.normalizeState(imported)); SF.audit(state, 'Import JSON', 'Données restaurées depuis un fichier JSON'); SF.touch(state); pending = {};
+        backupLocal(); replaceState(SF.normalizeState(imported)); state.company.name = coName() || state.company.name; SF.audit(state, 'Import JSON', 'Données restaurées depuis un fichier JSON'); SF.touch(state); pending = {};
         commit(); toast('Sauvegarde restaurée.', 'success');
       } catch (e) { toast(e.message, 'error'); }
     };
     reader.readAsText(file);
   }
   function seedDemo() {
+    if (!need('admin')) return;
     if ((state.articles.length || state.movements.length) && !confirm('Des données existent déjà. Les remplacer par la démonstration ?\nUne copie de sécurité sera conservée.')) return;
     backupLocal(); const keep = { company: state.company, settings: state.settings }; replaceState({ ...SF.buildDemo(), ...keep, settings: { ...SF.buildDemo().settings, ...keep.settings } });
     SF.touch(state); pending = {}; commit(); toast('Données de démonstration chargées.', 'success');
   }
   function resetApp() {
+    if (!need('admin')) return;
     if (!confirm('Supprimer TOUTES les données de cet appareil (articles, mouvements, journal) ?')) return;
     if (!confirm('Dernière confirmation : cette action est irréversible (sauf sauvegarde JSON ou GitHub).')) return;
     backupLocal(); const keep = { company: state.company }; replaceState({ ...SF.defaultState(), ...keep }); SF.audit(state, 'Réinitialisation', 'Application réinitialisée'); SF.touch(state); pending = {};
     commit(); toast('Application réinitialisée.', 'success');
   }
 
+
+  /* ======================= Administration (sociétés, utilisateurs) ======================= */
+  const dt = (s) => (s ? new Date(s).toLocaleString('fr-FR') : '—');
+  function renderAdmin() {
+    if (!can('admin')) return;
+    $('companiesBody').innerHTML = reg.companies.map((c) => {
+      const st = c.id === companyId ? state : loadCompany(c.id); const nUsers = reg.users.filter((u) => u.active && Auth.canCompany(u, c.id)).length;
+      const empty = !st.articles.length && !st.movements.length;
+      return `<tr><td class="title" data-label="Société"><b>${esc(c.name)}</b>${c.id === companyId ? ' <span class="badge ok">active</span>' : ''}${c.archived ? ' <span class="badge muted">archivée</span>' : ''}</td>
+        <td class="num" data-label="Articles">${st.articles.length}</td><td class="num" data-label="Mouvements">${st.movements.length}</td><td data-label="Utilisateurs">${nUsers}</td>
+        <td class="actions">${!c.archived && c.id !== companyId ? `<button class="mini-btn" data-admin="open-company" data-id="${esc(c.id)}">Ouvrir</button>` : ''}<button class="mini-btn" data-admin="rename-company" data-id="${esc(c.id)}">Renommer</button><button class="mini-btn" data-admin="${c.archived ? 'restore-company' : 'archive-company'}" data-id="${esc(c.id)}">${c.archived ? 'Réactiver' : 'Archiver'}</button>${empty ? `<button class="mini-btn" data-admin="delete-company" data-id="${esc(c.id)}">Supprimer</button>` : ''}</td></tr>`;
+    }).join('');
+    $('usersBody').innerHTML = reg.users.map((u) => {
+      const self = u.id === sessionUserId;
+      const cos = u.role === 'admin' || u.companies === '*' ? 'Toutes' : (u.companies.map((id) => (reg.companies.find((c) => c.id === id) || {}).name).filter(Boolean).join(', ') || '—');
+      return `<tr><td class="title" data-label="Nom"><b>${esc(u.name)}</b>${self ? ' <span class="badge info">vous</span>' : ''}</td><td data-label="Identifiant">${esc(u.username)}</td><td data-label="Rôle">${esc(Auth.roleLabel(u.role))}</td>
+        <td data-label="Sociétés">${esc(cos)}</td><td data-label="État"><span class="badge ${u.active ? 'ok' : 'alert'}">${u.active ? 'Actif' : 'Bloqué'}</span></td><td data-label="Dernière connexion">${dt(u.lastLoginAt)}</td>
+        <td class="actions"><button class="mini-btn" data-admin="edit-user" data-id="${esc(u.id)}">Éditer</button>${self ? '' : `<button class="mini-btn" data-admin="toggle-user" data-id="${esc(u.id)}">${u.active ? 'Bloquer' : 'Débloquer'}</button><button class="mini-btn" data-admin="delete-user" data-id="${esc(u.id)}">Supprimer</button>`}</td></tr>`;
+    }).join('');
+    $('regLogBody').innerHTML = reg.log.slice(0, 120).map((l) => `<tr><td data-label="Date">${dt(l.t)}</td><td data-label="Utilisateur">${esc(l.who)}</td><td data-label="Action">${esc(l.action)}</td><td data-label="Détail">${esc(l.detail || '')}</td></tr>`).join('') || '<tr><td colspan="4" class="empty">Aucun événement.</td></tr>';
+  }
+  async function adminAction(action, id) {
+    if (!need('admin')) return; const who = me().name;
+    try {
+      if (action === 'new-user' || action === 'edit-user') return openUserDialog(id);
+      if (action === 'new-company') {
+        const n = prompt('Nom de la nouvelle société :'); if (!n) return;
+        const c = Auth.addCompany(reg, n); const st = SF.defaultState(); st.company.name = c.name; writeJson(CO_PREFIX + c.id, st);
+        Auth.logEvent(reg, who, 'Société créée', c.name); commitReg(); toast(`Société « ${c.name} » créée. Accordez-y l'accès aux utilisateurs concernés.`, 'success');
+      } else if (action === 'rename-company') {
+        const c = reg.companies.find((x) => x.id === id); const n = prompt('Nouveau nom de la société :', c.name); if (!n || n.trim() === c.name) return;
+        Auth.renameCompany(reg, id, n); if (id === companyId) { state.company.name = n.trim(); saveLocal(); } else { const st = loadCompany(id); st.company.name = n.trim(); writeJson(CO_PREFIX + id, st); }
+        Auth.logEvent(reg, who, 'Société renommée', `${c.name}`); commitReg(); toast('Société renommée.', 'success');
+      } else if (action === 'open-company') { switchCompany(id); }
+      else if (action === 'archive-company' || action === 'restore-company') {
+        const c = reg.companies.find((x) => x.id === id);
+        if (action === 'archive-company') {
+          if (reg.companies.filter((x) => !x.archived).length < 2) throw new Error('Il doit rester au moins une société active.');
+          if (!confirm(`Archiver la société « ${c.name} » ? Elle ne sera plus proposée, mais ses données sont conservées.`)) return;
+          c.archived = true; if (id === companyId) switchCompany(reg.companies.find((x) => !x.archived).id, true);
+        } else c.archived = false;
+        Auth.logEvent(reg, who, c.archived ? 'Société archivée' : 'Société réactivée', c.name); commitReg();
+      } else if (action === 'delete-company') {
+        const c = reg.companies.find((x) => x.id === id); const st = id === companyId ? state : loadCompany(id);
+        if (st.articles.length || st.movements.length) throw new Error('Suppression impossible : cette société contient des données. Archivez-la à la place.');
+        if (reg.companies.length < 2 || !confirm(`Supprimer définitivement la société vide « ${c.name} » ?`)) return;
+        if (id === companyId) switchCompany(reg.companies.find((x) => x.id !== id && !x.archived).id, true);
+        reg.companies = reg.companies.filter((x) => x.id !== id); try { localStorage.removeItem(CO_PREFIX + id); } catch (e) { /* ignore */ }
+        reg.users.forEach((u) => { if (Array.isArray(u.companies)) u.companies = u.companies.filter((x) => x !== id); });
+        Auth.logEvent(reg, who, 'Société supprimée', c.name); commitReg();
+      } else if (action === 'toggle-user') {
+        const u = reg.users.find((x) => x.id === id); await Auth.updateUser(reg, id, { active: !u.active });
+        Auth.logEvent(reg, who, u.active ? 'Utilisateur débloqué' : 'Utilisateur bloqué', u.username); commitReg(); toast(u.active ? 'Utilisateur débloqué.' : 'Utilisateur bloqué.', 'success');
+      } else if (action === 'delete-user') {
+        const u = reg.users.find((x) => x.id === id); if (!confirm(`Supprimer le compte de ${u.name} (${u.username}) ?`)) return;
+        Auth.deleteUser(reg, id); Auth.logEvent(reg, who, 'Utilisateur supprimé', u.username); commitReg(); toast('Utilisateur supprimé.', 'success');
+      }
+    } catch (e) { toast(e.message, 'error'); }
+  }
+
+  let userDraft = { perms: [], companies: [] };
+  function drawUserChecks() {
+    const role = $('userRole').value; const isAdm = role === 'admin';
+    const groups = {}; Auth.PERMS.forEach((p) => { (groups[p.group] ||= []).push(p); });
+    $('userPerms').innerHTML = Object.entries(groups).map(([g, ps]) => `<div class="perm-group"><b>${esc(g)}</b>${ps.map((p) => `<label class="check"><input type="checkbox" class="perm-cb" value="${p.key}" ${isAdm || p.key === 'view' || userDraft.perms.includes(p.key) ? 'checked' : ''} ${isAdm || p.key === 'view' ? 'disabled' : ''} /> ${esc(p.label)}</label>`).join('')}</div>`).join('');
+    const all = isAdm || userDraft.companies === '*';
+    $('userCompanies').innerHTML = `<label class="check"><input type="checkbox" id="coAll" ${all ? 'checked' : ''} ${isAdm ? 'disabled' : ''} /> Toutes les sociétés</label>`
+      + reg.companies.filter((c) => !c.archived).map((c) => `<label class="check"><input type="checkbox" class="co-cb" value="${esc(c.id)}" ${all || (Array.isArray(userDraft.companies) && userDraft.companies.includes(c.id)) ? 'checked' : ''} ${all ? 'disabled' : ''} /> ${esc(c.name)}</label>`).join('');
+  }
+  function openUserDialog(id) {
+    const u = id ? reg.users.find((x) => x.id === id) : null; $('userError').textContent = '';
+    $('userDialogTitle').textContent = u ? `Modifier ${u.name}` : 'Nouvel utilisateur'; $('userId').value = u ? u.id : '';
+    $('userNameInput').value = u ? u.name : ''; $('userLogin').value = u ? u.username : ''; $('userPassword').value = '';
+    $('userPasswordLabel').textContent = u ? 'Nouveau mot de passe (vide = inchangé)' : 'Mot de passe *';
+    $('userRole').innerHTML = Object.entries(Auth.ROLES).map(([k, r]) => `<option value="${k}">${esc(r.label)}</option>`).join('');
+    const role = u ? u.role : 'storekeeper'; $('userRole').value = role;
+    $('userActive').checked = u ? u.active : true; $('userActive').disabled = !!u && u.id === sessionUserId;
+    userDraft = { perms: u ? u.perms.slice() : Auth.ROLES[role].perms.slice(), companies: u ? (u.companies === '*' ? '*' : u.companies.slice()) : [companyId] };
+    drawUserChecks(); openDialog('userDialog'); setTimeout(() => $('userNameInput').focus(), 60);
+  }
+  function onUserFormChange(e) {
+    const t = e.target;
+    if (t.id === 'userRole') { const r = t.value; if (r !== 'custom' && r !== 'admin') userDraft.perms = Auth.ROLES[r].perms.slice(); drawUserChecks(); return; }
+    if (t.classList.contains('perm-cb')) {
+      userDraft.perms = $$('#userPerms .perm-cb:checked').map((x) => x.value);
+      const set = [...new Set(['view', ...userDraft.perms])].sort().join(',');
+      const match = ['manager', 'storekeeper', 'viewer'].find((k) => [...Auth.ROLES[k].perms].sort().join(',') === set); $('userRole').value = match || 'custom';
+    }
+    if (t.id === 'coAll') { userDraft.companies = t.checked ? '*' : []; drawUserChecks(); return; }
+    if (t.classList.contains('co-cb')) userDraft.companies = $$('#userCompanies .co-cb:checked').map((x) => x.value);
+  }
+  async function submitUser(e) {
+    e.preventDefault(); if (!need('admin')) return; $('userError').textContent = '';
+    const id = $('userId').value; const role = $('userRole').value;
+    const d = { name: $('userNameInput').value, username: $('userLogin').value, password: $('userPassword').value, role, perms: userDraft.perms, companies: userDraft.companies, active: $('userActive').checked };
+    try {
+      if (role !== 'admin' && d.companies !== '*' && !d.companies.length) throw new Error('Choisissez au moins une société pour cet utilisateur.');
+      if (id) await Auth.updateUser(reg, id, d); else await Auth.createUser(reg, d);
+      Auth.logEvent(reg, me().name, id ? 'Utilisateur modifié' : 'Utilisateur créé', d.username);
+      closeDialog('userDialog'); commitReg(); toast('Utilisateur enregistré.', 'success');
+    } catch (err) { $('userError').textContent = err.message; }
+  }
+  async function submitPwd(e) {
+    e.preventDefault(); $('pwdError').textContent = '';
+    try {
+      if ($('pwdNew').value !== $('pwdNew2').value) throw new Error('Les deux mots de passe ne correspondent pas.');
+      await Auth.changeOwnPassword(reg, sessionUserId, $('pwdOld').value, $('pwdNew').value);
+      saveReg(); markDirty(); closeDialog('pwdDialog'); toast('Mot de passe modifié.', 'success');
+    } catch (err) { $('pwdError').textContent = err.message; }
+  }
+  function exportWorkspace() {
+    if (!need('admin')) return;
+    download(new Blob([JSON.stringify(buildBundle(), null, 2)], { type: 'application/json' }), `sauvegarde_complete_stockflow_${SF.today()}.json`);
+  }
+
   /* ======================= Import / export par onglet ======================= */
+  const IO_WRITE = { articles: 'articles_edit', entry: 'entries', exit: 'exits', inventory: 'inventories' };
   const IO_NAME = { articles: 'des articles', entry: 'des entrées', exit: 'des sorties', inventory: 'des inventaires' };
   const IO_TITLE = { articles: 'Articles', entry: 'Entrées de stock', exit: 'Sorties de stock', inventory: 'Inventaires' };
+  function fillIoBars() { $$('[data-iobar]').forEach((el) => { el.innerHTML = ioBarHtml(el.dataset.iobar); el.hidden = !el.innerHTML.trim(); }); }
   function ioBarHtml(kind) {
-    return `<div class="io-group"><span class="io-label">Importer</span>
+    const imp = can('import') && can(IO_WRITE[kind]); const exp = can('export');
+    return `${imp ? `<div class="io-group"><span class="io-label">Importer</span>
         <button class="secondary-btn" type="button" data-io="open" data-kind="${kind}">⬆️ Excel / CSV</button>
-        <button class="secondary-btn" type="button" data-io="template" data-kind="${kind}">📄 Modèle</button></div>
-      <div class="io-group"><span class="io-label">Exporter</span>
+        <button class="secondary-btn" type="button" data-io="template" data-kind="${kind}">📄 Modèle</button></div>` : ''}
+      ${exp ? `<div class="io-group"><span class="io-label">Exporter</span>
         <button class="secondary-btn" type="button" data-io="export" data-fmt="xlsx" data-kind="${kind}">Excel</button>
         <button class="secondary-btn" type="button" data-io="export" data-fmt="docx" data-kind="${kind}">Word</button>
-        <button class="secondary-btn" type="button" data-io="export" data-fmt="pdf" data-kind="${kind}">PDF</button></div>`;
+        <button class="secondary-btn" type="button" data-io="export" data-fmt="pdf" data-kind="${kind}">PDF</button></div>` : ''}`;
   }
   function tabReport(kind) {
     if (kind === 'articles') {
@@ -663,6 +927,7 @@
   }
   async function exportTab(kind, fmt, btn) {
     const rep = tabReport(kind);
+    if (!need('export')) return;
     if (!rep.rows.length) return toast('Rien à exporter pour le moment.', 'info');
     doExport(fmt, [rep], fileBase(rep.title), btn);
   }
@@ -673,7 +938,8 @@
   }
 
   let importCtx = null; // { kind, aoa, plan, update, result }
-  function openImport(kind) { importCtx = { kind, aoa: null, plan: null, update: true, result: null }; renderImport(); openDialog('importDialog'); }
+  function openImport(kind) {
+    if (!need('import') || !need(IO_WRITE[kind])) return; importCtx = { kind, aoa: null, plan: null, update: true, result: null }; renderImport(); openDialog('importDialog'); }
   function renderImport() {
     const c = importCtx; const kind = c.kind; const body = $('importBody');
     $('importTitle').textContent = `Importer ${IO_NAME[kind]}`;
@@ -720,6 +986,7 @@
     renderImport();
   }
   function confirmImport() {
+    if (!need('import') || !need(IO_WRITE[importCtx && importCtx.kind])) return;
     const c = importCtx; if (!c || !c.plan || !c.plan.items.length) return;
     try { localStorage.setItem('stockflow-backup-before-import', JSON.stringify({ at: new Date().toISOString(), state })); } catch (e) { /* stockage plein : on continue */ }
     // on rejoue le plan sur l'état actuel (il a pu changer entre-temps)
@@ -742,7 +1009,8 @@
     ['syncChipSide', 'syncChipTop'].forEach((id) => { $(id).onclick = () => { if (!syncConfigured()) showView('settings'); else syncNow(); }; });
 
     document.addEventListener('click', (e) => {
-      const t = e.target.closest('[data-goto],[data-action],[data-close],[data-export],[data-bundle],[data-io]'); if (!t) { return; }
+      const t = e.target.closest('[data-goto],[data-action],[data-close],[data-export],[data-bundle],[data-io],[data-admin]'); if (!t) { return; }
+      if (t.dataset.admin) return adminAction(t.dataset.admin, t.dataset.id);
       if (t.dataset.io) {
         const io = t.dataset.io; const kind = t.dataset.kind;
         if (io === 'open') return openImport(kind);
@@ -776,6 +1044,19 @@
     });
     document.addEventListener('click', (e) => { if (e.target && e.target.id === 'welcomeDemo') seedDemo(); });
 
+    $('loginForm').addEventListener('submit', doLogin); $('setupForm').addEventListener('submit', doSetup);
+    $('forgotBtn').onclick = () => { $('forgotBox').hidden = !$('forgotBox').hidden; };
+    $('resetAccountsBtn').onclick = () => {
+      const t = prompt('Cette action supprime tous les comptes de cet appareil (vos données de stock sont conservées).\nTapez REINITIALISER pour confirmer :'); if (t !== 'REINITIALISER') return;
+      reg.users = []; Auth.logEvent(reg, '', 'Comptes réinitialisés sur cet appareil'); saveReg(); markDirty(); endSession(); showAuth();
+    };
+    $('authSyncToggle').onclick = () => { $('authSyncBox').hidden = !$('authSyncBox').hidden; }; $('asRunBtn').onclick = authSyncRun;
+    $('logoutBtn').onclick = () => { const u = me(); if (u) { Auth.logEvent(reg, u.name, 'Déconnexion'); saveReg(); } endSession(); showAuth(); };
+    $('pwdBtn').onclick = () => { ['pwdOld', 'pwdNew', 'pwdNew2'].forEach((id) => { $(id).value = ''; }); $('pwdError').textContent = ''; closeDrawer(); openDialog('pwdDialog'); };
+    $('pwdForm').addEventListener('submit', submitPwd);
+    $('companySelect').addEventListener('change', (e) => { switchCompany(e.target.value); closeDrawer(); });
+    $('userForm').addEventListener('submit', submitUser); $('userForm').addEventListener('change', onUserFormChange);
+    $('exportWorkspaceBtn').onclick = exportWorkspace;
     $('importFile').addEventListener('change', (e) => { const f = e.target.files[0]; if (f) onImportFile(f); });
     $('articleForm').addEventListener('submit', submitArticle);
     ['articleInitialQty', 'articleInitialCost'].forEach((id) => $(id).addEventListener('input', computeInitialValue));
@@ -788,18 +1069,19 @@
     ['thresholdSearch', 'thresholdFamily', 'thresholdOnlyAlert'].forEach((id) => $(id).addEventListener('input', renderThresholdTable));
     $('thresholdsSaveBtn').onclick = saveThresholds; $('thresholdsResetBtn').onclick = () => { pending = {}; renderThresholdTable(); };
     $('bulkApplyBtn').onclick = bulkApply;
-    $('rulesForm').addEventListener('submit', (e) => { e.preventDefault(); state.settings.dormantDays = SF.clampInt($('ruleDormant').value, 0, 3650); SF.audit(state, 'Règles d\'alerte', `Sans mouvement : ${state.settings.dormantDays} j`); SF.touch(state); commit(); toast('Règle enregistrée.', 'success'); });
+    $('rulesForm').addEventListener('submit', (e) => { e.preventDefault(); if (!need('thresholds')) return; state.settings.dormantDays = SF.clampInt($('ruleDormant').value, 0, 3650); SF.audit(state, 'Règles d\'alerte', `Sans mouvement : ${state.settings.dormantDays} j`); SF.touch(state); commit(); toast('Règle enregistrée.', 'success'); });
 
     $('reportType').onchange = renderReportParams; $('reportRunBtn').onclick = runReport; $('printBtn').onclick = () => window.print();
 
-    $('companyForm').addEventListener('submit', (e) => { e.preventDefault(); state.company = { name: $('companyName').value.trim(), address: $('companyAddress').value.trim(), phone: $('companyPhone').value.trim() }; SF.audit(state, 'Société', 'Informations mises à jour'); SF.touch(state); commit(); toast('Informations enregistrées.', 'success'); });
-    $('settingsForm').addEventListener('submit', (e) => { e.preventDefault();
+    $('companyForm').addEventListener('submit', (e) => { e.preventDefault(); if (!need('settings')) return; state.company = { name: $('companyName').value.trim() || coName(), address: $('companyAddress').value.trim(), phone: $('companyPhone').value.trim() };
+      if (state.company.name !== coName()) { try { Auth.renameCompany(reg, companyId, state.company.name); saveReg(); } catch (err) { state.company.name = coName(); toast(err.message, 'error'); } } SF.audit(state, 'Société', 'Informations mises à jour'); SF.touch(state); commit(); toast('Informations enregistrées.', 'success'); });
+    $('settingsForm').addEventListener('submit', (e) => { e.preventDefault(); if (!need('settings')) return;
       Object.assign(state.settings, { decimals: Number($('settingDecimals').value), qtyDecimals: Number($('settingQtyDecimals').value), currency: $('settingCurrency').value.trim(), negativeMode: $('settingNegativeMode').value });
       SF.audit(state, 'Règles métier', `Décimales=${state.settings.decimals}, négatif=${state.settings.negativeMode}`); SF.touch(state); commit(); toast('Règles enregistrées.', 'success'); });
 
-    $('syncForm').addEventListener('submit', (e) => { e.preventDefault(); readSyncForm(); toast('Configuration enregistrée sur cet appareil.', 'success'); if (syncConfigured()) syncNow({ silent: false }); });
+    $('syncForm').addEventListener('submit', (e) => { e.preventDefault(); if (!need('sync')) return; readSyncForm(); toast('Configuration enregistrée sur cet appareil.', 'success'); if (syncConfigured()) syncNow({ silent: false }); });
     $('syncTestBtn').onclick = testSync; $('syncNowBtn').onclick = () => { readSyncForm(); syncNow(); };
-    $('syncForgetBtn').onclick = () => { if (!confirm('Oublier le jeton et la configuration de synchronisation sur cet appareil ? (les données locales sont conservées)')) return; Object.assign(sync, { owner: '', repo: '', branch: '', token: '', passphrase: '', remember: false, lastSha: null, dirty: false, lastSyncAt: null }); sessionPass = ''; saveSync(); setSyncState('off'); renderSettings(); toast('Configuration oubliée.', 'success'); };
+    $('syncForgetBtn').onclick = () => { if (!need('sync')) return; if (!confirm('Oublier le jeton et la configuration de synchronisation sur cet appareil ? (les données locales sont conservées)')) return; Object.assign(sync, { owner: '', repo: '', branch: '', token: '', passphrase: '', remember: false, lastSha: null, dirty: false, lastSyncAt: null }); sessionPass = ''; saveSync(); setSyncState('off'); renderSettings(); toast('Configuration oubliée.', 'success'); };
 
     $('exportJsonBtn').onclick = exportJson; $('importJsonInput').onchange = (e) => { if (e.target.files[0]) importJson(e.target.files[0]); e.target.value = ''; };
     $('seedDemoBtn').onclick = seedDemo; $('resetAppBtn').onclick = resetApp;
@@ -811,18 +1093,18 @@
 
   /* ======================= Démarrage ======================= */
   function init() {
-    buildMoveForms(); $$('[data-iobar]').forEach((el) => { el.innerHTML = ioBarHtml(el.dataset.iobar); }); bind();
-    $('versionInfo').textContent = 'StockFlow v2.2';
+    buildMoveForms(); fillIoBars(); bind();
+    $('versionInfo').textContent = 'StockFlow v3.0';
     // Téléphone : la barre du bas se masque quand le clavier est ouvert (sinon elle recouvre le champ de saisie)
     let kbTimer; const isField = (t) => t && /^(INPUT|SELECT|TEXTAREA)$/.test(t.tagName) && !['checkbox', 'radio', 'range', 'button', 'file'].includes(t.type);
     document.addEventListener('focusin', (e) => { if (isField(e.target)) { clearTimeout(kbTimer); document.body.classList.add('kb-open'); } });
     document.addEventListener('focusout', () => { clearTimeout(kbTimer); kbTimer = setTimeout(() => { if (!isField(document.activeElement)) document.body.classList.remove('kb-open'); }, 150); });
     cache = {}; renderLists();
-    const start = location.hash.slice(1); showView(VIEWS[start] ? start : 'dashboard', false);
-    renderAll();
+    const sid = readSession();
+    if (sid && reg.users.some((u) => u.id === sid && u.active)) { sessionUserId = sid; SF.setActor(me().name); enterApp(); } else showAuth();
     if (syncConfigured() && sync.auto) { lastVisSync = Date.now(); syncNow({ silent: true }); }
     if ('serviceWorker' in navigator && /^https?:$/.test(location.protocol)) navigator.serviceWorker.register('sw.js').catch(() => {});
   }
-  window.StockFlowApp = { get state() { return state; }, syncNow };
+  window.StockFlowApp = { get state() { return state; }, get reg() { return reg; }, get companyId() { return companyId; }, syncNow };
   init();
 })();

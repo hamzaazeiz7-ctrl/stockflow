@@ -13,7 +13,7 @@
   <link rel="apple-touch-icon" href="icons/icon-192.png" />
   <link rel="stylesheet" href="css/styles.css" />
 </head>
-<body>
+<body class="locked">
   <div class="app-shell">
     <aside class="sidebar" id="sidebar" aria-label="Navigation principale">
       <div class="brand">
@@ -25,21 +25,27 @@
         <button class="icon-btn drawer-close" id="drawerCloseBtn" aria-label="Fermer le menu">✕</button>
       </div>
 
+      <div class="company-switch" id="companySwitch"><label for="companySelect">Société active</label><select id="companySelect" aria-label="Société active"></select></div>
+
       <nav class="nav-menu" id="navMenu">
-        <button class="nav-link active" data-view="dashboard"><span class="ico">🏠</span><span>Tableau de bord</span></button>
-        <button class="nav-link" data-view="articles"><span class="ico">📦</span><span>Articles</span></button>
-        <div class="nav-sep">Saisie</div>
-        <button class="nav-link" data-view="entries"><span class="ico">⬇️</span><span>Entrées</span></button>
-        <button class="nav-link" data-view="exits"><span class="ico">⬆️</span><span>Sorties</span></button>
-        <button class="nav-link" data-view="inventories"><span class="ico">🧮</span><span>Inventaires</span></button>
+        <button class="nav-link active" data-view="dashboard" data-perm="view"><span class="ico">🏠</span><span>Tableau de bord</span></button>
+        <button class="nav-link" data-view="articles" data-perm="view"><span class="ico">📦</span><span>Articles</span></button>
+        <div class="nav-sep" data-perm-any="entries exits inventories">Saisie</div>
+        <button class="nav-link" data-view="entries" data-perm="entries"><span class="ico">⬇️</span><span>Entrées</span></button>
+        <button class="nav-link" data-view="exits" data-perm="exits"><span class="ico">⬆️</span><span>Sorties</span></button>
+        <button class="nav-link" data-view="inventories" data-perm="inventories"><span class="ico">🧮</span><span>Inventaires</span></button>
         <div class="nav-sep">Suivi</div>
-        <button class="nav-link" data-view="movements"><span class="ico">📋</span><span>Mouvements</span></button>
-        <button class="nav-link" data-view="alerts"><span class="ico">🔔</span><span>Alertes &amp; seuils</span><span class="nav-badge" id="alertBadge" hidden>0</span></button>
-        <button class="nav-link" data-view="reports"><span class="ico">📊</span><span>États &amp; exports</span></button>
-        <button class="nav-link" data-view="settings"><span class="ico">⚙️</span><span>Paramètres</span></button>
+        <button class="nav-link" data-view="movements" data-perm="view"><span class="ico">📋</span><span>Mouvements</span></button>
+        <button class="nav-link" data-view="alerts" data-perm="view"><span class="ico">🔔</span><span>Alertes &amp; seuils</span><span class="nav-badge" id="alertBadge" hidden>0</span></button>
+        <button class="nav-link" data-view="reports" data-perm="view"><span class="ico">📊</span><span>États &amp; exports</span></button>
+        <button class="nav-link" data-view="settings" data-perm-any="settings sync"><span class="ico">⚙️</span><span>Paramètres</span></button>
+        <div class="nav-sep" data-perm="admin">Administration</div>
+        <button class="nav-link" data-view="admin" data-perm="admin"><span class="ico">👥</span><span>Sociétés &amp; utilisateurs</span></button>
       </nav>
 
       <div class="sidebar-footer">
+        <div class="user-box" id="userBox"><div class="user-line"><b id="userName"></b><small id="userRoleLabel"></small></div>
+          <div class="user-actions"><button class="secondary-btn mini-btn" id="pwdBtn" type="button">Mon mot de passe</button><button class="secondary-btn mini-btn" id="logoutBtn" type="button">Déconnexion</button></div></div>
         <button class="sync-chip" id="syncChipSide" data-sync="off" type="button">☁ Local uniquement</button>
         <small class="muted" id="versionInfo">v2.0</small>
       </div>
@@ -51,6 +57,7 @@
         <button class="icon-btn menu-btn" id="menuBtn" aria-label="Ouvrir le menu">☰</button>
         <div class="topbar-title">
           <h2 id="pageTitle">Tableau de bord</h2>
+          <p class="co-line"><span id="coLine"></span></p>
           <p id="pageSubtitle">Vue synthétique du stock et des mouvements.</p>
         </div>
         <div class="topbar-actions">
@@ -94,7 +101,7 @@
         <div class="panel">
           <div class="panel-header between">
             <h3>Articles</h3>
-            <button class="primary-btn" data-action="new-article">+ Nouvel article</button>
+            <button class="primary-btn" data-action="new-article" data-perm="articles_edit">+ Nouvel article</button>
           </div>
           <div class="io-bar" data-iobar="articles"></div>
           <div class="toolbar">
@@ -152,8 +159,8 @@
           <div class="panel-header between">
             <h3>Configuration manuelle des seuils</h3>
             <div class="actions-inline">
-              <button class="secondary-btn" id="thresholdsResetBtn" disabled>Annuler les modifications</button>
-              <button class="primary-btn" id="thresholdsSaveBtn" disabled>Enregistrer les seuils</button>
+              <button class="secondary-btn" id="thresholdsResetBtn" data-perm="thresholds" disabled>Annuler les modifications</button>
+              <button class="primary-btn" id="thresholdsSaveBtn" data-perm="thresholds" disabled>Enregistrer les seuils</button>
             </div>
           </div>
           <p class="hint"><b>Minimum</b> : en dessous, alerte <i>critique</i>. <b>Point de commande</b> : à ce niveau (ou en dessous), l'article passe « À commander ». <b>Maximum</b> : au-dessus, alerte « Surstock ». <b>Qté de réappro</b> : quantité commandée par lot (sert à la suggestion de commande). Laisser <b>0</b> pour désactiver un seuil.</p>
@@ -223,9 +230,9 @@
           <div class="panel-header between">
             <h3 id="reportTitle">Résultat</h3>
             <div class="actions-inline export-btns">
-              <button class="secondary-btn" data-export="xlsx" disabled>📗 Excel</button>
-              <button class="secondary-btn" data-export="docx" disabled>📘 Word</button>
-              <button class="secondary-btn" data-export="pdf" disabled>📕 PDF</button>
+              <button class="secondary-btn" data-export="xlsx" data-perm="export" disabled>📗 Excel</button>
+              <button class="secondary-btn" data-export="docx" data-perm="export" disabled>📘 Word</button>
+              <button class="secondary-btn" data-export="pdf" data-perm="export" disabled>📕 PDF</button>
               <button class="secondary-btn" id="printBtn" disabled>🖨 Imprimer</button>
             </div>
           </div>
@@ -239,9 +246,9 @@
           <p class="hint">Un seul fichier avec sommaire : état de stock, valorisation par famille, alertes, réapprovisionnement et analyse ABC.</p>
           <div class="form-grid"><div><label for="bundleDate">À la date du</label><input type="date" id="bundleDate" /></div>
             <div class="actions-inline align-end">
-              <button class="secondary-btn" data-bundle="xlsx">📗 Excel</button>
-              <button class="secondary-btn" data-bundle="docx">📘 Word</button>
-              <button class="secondary-btn" data-bundle="pdf">📕 PDF</button>
+              <button class="secondary-btn" data-bundle="xlsx" data-perm="export">📗 Excel</button>
+              <button class="secondary-btn" data-bundle="docx" data-perm="export">📘 Word</button>
+              <button class="secondary-btn" data-bundle="pdf" data-perm="export">📕 PDF</button>
             </div></div>
         </div>
       </section>
@@ -249,7 +256,7 @@
       <!-- PARAMETRES -->
       <section class="view" id="settingsView">
         <div class="grid-2">
-          <div class="panel">
+          <div class="panel" data-perm="settings">
             <div class="panel-header"><h3>Société</h3></div>
             <p class="hint">Ces informations apparaissent en en-tête des exports Excel, Word et PDF.</p>
             <form id="companyForm" class="form-grid one">
@@ -276,7 +283,7 @@
           </div>
         </div>
 
-        <div class="panel">
+        <div class="panel" data-perm="settings">
           <div class="panel-header"><h3>Règles métier</h3></div>
           <form id="settingsForm" class="form-grid">
             <div><label for="settingDecimals">Décimales des montants</label><select id="settingDecimals"><option value="2">2</option><option value="3">3 (dinar tunisien)</option></select></div>
@@ -287,7 +294,7 @@
           </form>
         </div>
 
-        <div class="panel" id="syncPanel">
+        <div class="panel" id="syncPanel" data-perm="sync">
           <div class="panel-header between"><h3>Synchronisation GitHub (PC · tablette · téléphone)</h3><span class="muted" id="syncStatusText">Non configurée</span></div>
           <p class="hint">Les données sont <b>chiffrées sur l'appareil</b> avant d'être envoyées dans un dépôt GitHub <b>privé</b>. Le même réglage sur chaque appareil donne les mêmes données partout. Voir le guide <code>README.md</code> pour créer le dépôt et le jeton.</p>
           <form id="syncForm" class="form-grid" autocomplete="off">
@@ -312,30 +319,85 @@
         </div>
 
         <div class="grid-2">
-          <div class="panel">
+          <div class="panel" data-perm="settings">
             <div class="panel-header"><h3>Données</h3></div>
             <div class="stack-list">
-              <button class="secondary-btn" id="exportJsonBtn">⬇ Sauvegarde complète (JSON)</button>
-              <label class="secondary-btn file-btn">⬆ Restaurer une sauvegarde (JSON)<input type="file" id="importJsonInput" accept="application/json,.json" hidden /></label>
-              <button class="ghost-btn" id="seedDemoBtn">Charger les données de démonstration</button>
-              <button class="danger-btn" id="resetAppBtn">Tout réinitialiser</button>
+              <button class="secondary-btn" id="exportJsonBtn">⬇ Sauvegarde de la société active (JSON)</button>
+              <button class="secondary-btn" id="exportWorkspaceBtn" data-perm="admin">⬇ Sauvegarde de toutes les sociétés et comptes (JSON)</button>
+              <label class="secondary-btn file-btn" data-perm="admin">⬆ Restaurer une sauvegarde (JSON)<input type="file" id="importJsonInput" accept="application/json,.json" hidden /></label>
+              <button class="ghost-btn" id="seedDemoBtn" data-perm="admin">Charger les données de démonstration</button>
+              <button class="danger-btn" id="resetAppBtn" data-perm="admin">Tout réinitialiser</button>
             </div>
           </div>
-          <div class="panel">
+          <div class="panel" data-perm="settings">
             <div class="panel-header"><h3>Journal d'audit</h3></div>
-            <div class="table-wrap short"><table class="rt"><thead><tr><th>Date</th><th>Action</th><th>Détail</th></tr></thead><tbody id="auditBody"></tbody></table></div>
+            <div class="table-wrap short"><table class="rt"><thead><tr><th>Date</th><th>Utilisateur</th><th>Action</th><th>Détail</th></tr></thead><tbody id="auditBody"></tbody></table></div>
           </div>
+        </div>
+      </section>
+      <!-- ADMINISTRATION -->
+      <section class="view" id="adminView">
+        <div class="panel">
+          <div class="panel-header between"><h3>Sociétés</h3><button class="primary-btn" type="button" data-admin="new-company">+ Nouvelle société</button></div>
+          <p class="hint">Chaque société a ses propres articles, mouvements, seuils et états : aucune donnée n'est mélangée entre sociétés.</p>
+          <div class="table-wrap"><table class="rt"><thead><tr><th>Société</th><th class="num">Articles</th><th class="num">Mouvements</th><th>Utilisateurs</th><th></th></tr></thead><tbody id="companiesBody"></tbody></table></div>
+        </div>
+        <div class="panel">
+          <div class="panel-header between"><h3>Utilisateurs et droits</h3><button class="primary-btn" type="button" data-admin="new-user">+ Nouvel utilisateur</button></div>
+          <div class="info-box">Vous choisissez pour chaque utilisateur son rôle, les sociétés auxquelles il accède et le détail de ses droits. Un compte bloqué ne peut plus se connecter.<br><small class="muted">Version locale (sans serveur) : les droits règlent ce que chaque profil voit et peut faire dans l'application, mais ne remplacent pas une sécurité serveur — à brancher à l'étape suivante.</small></div>
+          <div class="table-wrap"><table class="rt"><thead><tr><th>Nom</th><th>Identifiant</th><th>Rôle</th><th>Sociétés</th><th>État</th><th>Dernière connexion</th><th></th></tr></thead><tbody id="usersBody"></tbody></table></div>
+        </div>
+        <div class="panel">
+          <div class="panel-header"><h3>Journal des connexions et de l'administration</h3></div>
+          <div class="table-wrap short"><table class="rt"><thead><tr><th>Date</th><th>Utilisateur</th><th>Action</th><th>Détail</th></tr></thead><tbody id="regLogBody"></tbody></table></div>
         </div>
       </section>
     </main>
   </div>
 
+  <!-- Connexion -->
+  <div class="auth-screen" id="authScreen">
+    <div class="auth-card">
+      <div class="brand-logo">SF</div>
+      <h1>StockFlow</h1>
+      <form id="loginForm" class="form-grid one" autocomplete="on">
+        <p class="hint">Connectez-vous pour accéder à vos sociétés.</p>
+        <div><label for="loginUser">Identifiant</label><input type="text" id="loginUser" autocomplete="username" autocapitalize="off" spellcheck="false" required /></div>
+        <div><label for="loginPass">Mot de passe</label><input type="password" id="loginPass" autocomplete="current-password" required /></div>
+        <label class="check"><input type="checkbox" id="loginRemember" checked /> Rester connecté sur cet appareil</label>
+        <p class="form-error" id="loginError" role="alert"></p>
+        <div class="form-actions"><button class="primary-btn" type="submit">Se connecter</button></div>
+        <button class="link-btn" type="button" id="forgotBtn">Mot de passe oublié ?</button>
+        <div class="info-box" id="forgotBox" hidden>Demandez à l'administrateur de réinitialiser votre mot de passe.<br>Administrateur : sur cet appareil, vous pouvez <button class="link-btn" type="button" id="resetAccountsBtn">réinitialiser les comptes</button> (vos données de stock sont conservées, vous recréerez le compte administrateur).</div>
+      </form>
+      <form id="setupForm" class="form-grid one" autocomplete="off" hidden>
+        <p class="hint"><b>Première utilisation.</b> Créez le compte administrateur : il gère les sociétés, les utilisateurs et leurs droits.</p>
+        <div><label for="setupName">Votre nom</label><input type="text" id="setupName" autocomplete="name" required /></div>
+        <div><label for="setupUser">Identifiant</label><input type="text" id="setupUser" autocapitalize="off" spellcheck="false" required /></div>
+        <div><label for="setupPass">Mot de passe (6 caractères minimum)</label><input type="password" id="setupPass" autocomplete="new-password" required /></div>
+        <div><label for="setupPass2">Confirmer le mot de passe</label><input type="password" id="setupPass2" autocomplete="new-password" required /></div>
+        <p class="form-error" id="setupError" role="alert"></p>
+        <div class="form-actions"><button class="primary-btn" type="submit">Créer le compte administrateur</button></div>
+        <button class="link-btn" type="button" id="authSyncToggle">J'ai déjà des données sur GitHub (autre appareil)</button>
+      </form>
+      <div id="authSyncBox" class="form-grid one" hidden>
+        <p class="hint">Entrez les mêmes informations que dans Paramètres &gt; Synchronisation.</p>
+        <div><label for="asOwner">Propriétaire GitHub</label><input type="text" id="asOwner" autocapitalize="off" spellcheck="false" /></div>
+        <div><label for="asRepo">Dépôt de données</label><input type="text" id="asRepo" autocapitalize="off" spellcheck="false" /></div>
+        <div><label for="asToken">Jeton GitHub</label><input type="password" id="asToken" autocomplete="off" /></div>
+        <div><label for="asPass">Phrase secrète</label><input type="password" id="asPass" autocomplete="off" /></div>
+        <p class="form-error" id="asError" role="alert"></p>
+        <div class="form-actions"><button class="primary-btn" type="button" id="asRunBtn">Récupérer mes données</button></div>
+      </div>
+    </div>
+  </div>
+
   <nav class="bottom-nav" id="bottomNav" aria-label="Accès rapide">
-    <button data-view="dashboard"><span class="ico">🏠</span>Accueil</button>
-    <button data-view="articles"><span class="ico">📦</span>Articles</button>
-    <button data-view="entries"><span class="ico">⬇️</span>Entrée</button>
-    <button data-view="exits"><span class="ico">⬆️</span>Sortie</button>
-    <button data-view="alerts"><span class="ico">🔔</span>Alertes<span class="nav-badge" id="alertBadgeBottom" hidden>0</span></button>
+    <button data-view="dashboard" data-perm="view"><span class="ico">🏠</span>Accueil</button>
+    <button data-view="articles" data-perm="view"><span class="ico">📦</span>Articles</button>
+    <button data-view="entries" data-perm="entries"><span class="ico">⬇️</span>Entrée</button>
+    <button data-view="exits" data-perm="exits"><span class="ico">⬆️</span>Sortie</button>
+    <button data-view="alerts" data-perm="view"><span class="ico">🔔</span>Alertes<span class="nav-badge" id="alertBadgeBottom" hidden>0</span></button>
     <button id="bottomMenuBtn"><span class="ico">☰</span>Menu</button>
   </nav>
 
@@ -390,6 +452,39 @@
     </form>
   </dialog>
 
+  <!-- Utilisateur -->
+  <dialog id="userDialog">
+    <form method="dialog" id="userForm" class="dialog-form" autocomplete="off">
+      <div class="dialog-head"><h3 id="userDialogTitle">Nouvel utilisateur</h3><button class="icon-btn" type="button" data-close="userDialog" aria-label="Fermer">✕</button></div>
+      <input type="hidden" id="userId" />
+      <div class="form-grid">
+        <div><label for="userNameInput">Nom *</label><input type="text" id="userNameInput" required /></div>
+        <div><label for="userLogin">Identifiant *</label><input type="text" id="userLogin" autocapitalize="off" spellcheck="false" required /></div>
+        <div><label for="userPassword" id="userPasswordLabel">Mot de passe *</label><input type="text" id="userPassword" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="6 caractères minimum" /></div>
+        <div><label for="userRole">Rôle</label><select id="userRole"></select></div>
+        <div class="full"><label>Sociétés autorisées</label><div id="userCompanies" class="check-grid"></div></div>
+        <div class="full"><label>Droits <span class="muted">(le rôle pré-coche les droits, vous pouvez les ajuster)</span></label><div id="userPerms" class="perm-groups"></div></div>
+        <div class="full"><label class="check"><input type="checkbox" id="userActive" checked /> Compte actif <span class="muted">(décochez pour bloquer)</span></label></div>
+      </div>
+      <p class="form-error" id="userError" role="alert"></p>
+      <div class="dialog-actions"><button class="secondary-btn" type="button" data-close="userDialog">Annuler</button><button class="primary-btn" type="submit">Enregistrer</button></div>
+    </form>
+  </dialog>
+
+  <!-- Mon mot de passe -->
+  <dialog id="pwdDialog">
+    <form method="dialog" id="pwdForm" class="dialog-form" autocomplete="off">
+      <div class="dialog-head"><h3>Changer mon mot de passe</h3><button class="icon-btn" type="button" data-close="pwdDialog" aria-label="Fermer">✕</button></div>
+      <div class="form-grid one">
+        <div><label for="pwdOld">Mot de passe actuel</label><input type="password" id="pwdOld" autocomplete="current-password" required /></div>
+        <div><label for="pwdNew">Nouveau mot de passe</label><input type="password" id="pwdNew" autocomplete="new-password" required /></div>
+        <div><label for="pwdNew2">Confirmer</label><input type="password" id="pwdNew2" autocomplete="new-password" required /></div>
+      </div>
+      <p class="form-error" id="pwdError" role="alert"></p>
+      <div class="dialog-actions"><button class="secondary-btn" type="button" data-close="pwdDialog">Annuler</button><button class="primary-btn" type="submit">Enregistrer</button></div>
+    </form>
+  </dialog>
+
   <!-- Import Excel / CSV -->
   <dialog id="importDialog">
     <div class="dialog-form">
@@ -429,6 +524,7 @@
   <script src="js/core.js"></script>
   <script src="js/sync.js"></script>
   <script src="js/exports.js"></script>
+  <script src="js/auth.js"></script>
   <script src="js/io.js"></script>
   <script src="js/app.js"></script>
 </body>

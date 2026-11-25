@@ -124,3 +124,10 @@ SheetJS (Apache-2.0), docx (MIT), jsPDF et jsPDF-AutoTable (MIT), police TeX Gyr
 - Onglets **Articles, Entrées, Sorties, Inventaires** : boutons **Importer (Excel / CSV)**, **Modèle** (fichier Excel vide à remplir) et **Exporter** (Excel, Word, PDF).
 - Import : aperçu avant validation, lignes en erreur listées avec le numéro de ligne, copie de sécurité automatique avant import. Un PDF ne peut pas être importé (convertissez-le en Excel/CSV).
 - Nouveau fichier à déposer sur GitHub : `js/io.js` (dossier js). À remplacer : `index.html`, `sw.js`, `css/styles.css`, `js/app.js`.
+
+## Sociétés, comptes et droits (v3.0)
+- **Plusieurs sociétés** dans la même application : chacune a ses propres articles, mouvements, seuils et états (aucune donnée mélangée). Sélecteur « Société active » dans le menu ; le nom de la société active s'affiche sous le titre de chaque page.
+- **Connexion** par identifiant + mot de passe. À la première ouverture : création du compte **administrateur** (vos anciennes données sont conservées dans la société 1).
+- **Rôles** (modifiables droit par droit) : Administrateur, Gérant (consulte, règle les seuils, exporte), Magasinier (saisit entrées/sorties/inventaires, importe, exporte), Lecteur (consulte), ou Personnalisé. L'administrateur crée les comptes, choisit les sociétés accessibles, bloque/débloque, réinitialise les mots de passe (menu « Sociétés & utilisateurs »).
+- **Synchronisation** : tout (sociétés, comptes, données) est chiffré dans UN fichier `stockflow-workspace.json` du dépôt privé. L'ancien `stockflow-data.json` n'est pas touché (copie de secours). Mettez à jour tous vos appareils avec la même version.
+- **Limite connue (mode local, sans serveur)** : les droits règlent ce que chaque profil voit et fait dans l'app, mais ce n'est pas une sécurité serveur. Étape suivante prévue : un vrai serveur d'authentification.

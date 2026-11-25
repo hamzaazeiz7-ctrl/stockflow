@@ -132,8 +132,10 @@
   }
 
   function nextId(state, type) { state.counters[type] = (state.counters[type] || 0) + 1; return `${type}_${state.counters[type]}`; }
+  let actorName = '';
+  const setActor = (name) => { actorName = String(name || ''); };
   function audit(state, action, detail) {
-    state.audit.unshift({ id: nextId(state, 'audit'), timestamp: new Date().toISOString(), action, detail });
+    state.audit.unshift({ id: nextId(state, 'audit'), timestamp: new Date().toISOString(), action, detail, by: actorName });
     state.audit = state.audit.slice(0, 300);
   }
   function touch(state) { state.meta.updatedAt = new Date().toISOString(); }
@@ -636,7 +638,7 @@
 
   root.SF = {
     EPS, STORAGE_KEY, SCHEMA_VERSION, esc, round6, num, clampInt, today, isValidDate, shiftDate, daysBetween, fmtDate, monthKey, makeFmt,
-    defaultState, normalizeState, normalizeArticle, nextId, audit, touch, sortMovements, computeHistory, snapshotMap, articleStateAt,
+    defaultState, normalizeState, normalizeArticle, nextId, audit, setActor, touch, sortMovements, computeHistory, snapshotMap, articleStateAt,
     addMovement, updateMovement, deleteMovement, saveArticle, validateArticle, setArchived, nextReference, typeLabel,
     qtyStatus, buildAlerts, reports, buildDemo, activeArticles
   };

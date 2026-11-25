@@ -135,7 +135,7 @@
       // Le distant a changé (ou première synchronisation de cet appareil)
       const remoteState = normalize(await decryptJson(remote.text, ctx.passphrase));
       let choice;
-      if (isEmptyState(ctx.localState) || (ctx.lastSha && !ctx.dirty)) choice = 'remote';
+      if ((ctx.isEmpty || isEmptyState)(ctx.localState) || (ctx.lastSha && !ctx.dirty)) choice = 'remote';
       else if (ctx.askConflict) choice = await ctx.askConflict({ local: ctx.localState, remote: remoteState, firstSync: !ctx.lastSha });
       else choice = 'cancel';
 
