@@ -1,0 +1,424 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#2563eb" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-title" content="StockFlow" />
+  <title>StockFlow - Gestion de stock</title>
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="icon" href="icons/icon-192.png" />
+  <link rel="apple-touch-icon" href="icons/icon-192.png" />
+  <link rel="stylesheet" href="css/styles.css" />
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar" id="sidebar" aria-label="Navigation principale">
+      <div class="brand">
+        <div class="brand-logo">SF</div>
+        <div class="brand-text">
+          <h1 id="brandName">StockFlow</h1>
+          <p>Gestion de stock · CUMP</p>
+        </div>
+        <button class="icon-btn drawer-close" id="drawerCloseBtn" aria-label="Fermer le menu">✕</button>
+      </div>
+
+      <nav class="nav-menu" id="navMenu">
+        <button class="nav-link active" data-view="dashboard"><span class="ico">🏠</span><span>Tableau de bord</span></button>
+        <button class="nav-link" data-view="articles"><span class="ico">📦</span><span>Articles</span></button>
+        <div class="nav-sep">Saisie</div>
+        <button class="nav-link" data-view="entries"><span class="ico">⬇️</span><span>Entrées</span></button>
+        <button class="nav-link" data-view="exits"><span class="ico">⬆️</span><span>Sorties</span></button>
+        <button class="nav-link" data-view="inventories"><span class="ico">🧮</span><span>Inventaires</span></button>
+        <div class="nav-sep">Suivi</div>
+        <button class="nav-link" data-view="movements"><span class="ico">📋</span><span>Mouvements</span></button>
+        <button class="nav-link" data-view="alerts"><span class="ico">🔔</span><span>Alertes &amp; seuils</span><span class="nav-badge" id="alertBadge" hidden>0</span></button>
+        <button class="nav-link" data-view="reports"><span class="ico">📊</span><span>États &amp; exports</span></button>
+        <button class="nav-link" data-view="settings"><span class="ico">⚙️</span><span>Paramètres</span></button>
+      </nav>
+
+      <div class="sidebar-footer">
+        <button class="sync-chip" id="syncChipSide" data-sync="off" type="button">☁ Local uniquement</button>
+        <small class="muted" id="versionInfo">v2.0</small>
+      </div>
+    </aside>
+    <div class="scrim" id="scrim"></div>
+
+    <main class="main-content">
+      <header class="topbar">
+        <button class="icon-btn menu-btn" id="menuBtn" aria-label="Ouvrir le menu">☰</button>
+        <div class="topbar-title">
+          <h2 id="pageTitle">Tableau de bord</h2>
+          <p id="pageSubtitle">Vue synthétique du stock et des mouvements.</p>
+        </div>
+        <div class="topbar-actions">
+          <button class="sync-chip" id="syncChipTop" data-sync="off" type="button">☁ Local</button>
+          <div class="zoom-ctl" role="group" aria-label="Taille d'affichage">
+            <button class="icon-btn" id="zoomOutBtn" aria-label="Réduire l'affichage" title="Réduire l'affichage">A−</button>
+            <button class="icon-btn" id="zoomInBtn" aria-label="Agrandir l'affichage" title="Agrandir l'affichage">A+</button>
+          </div>
+          <button class="icon-btn" id="themeBtn" aria-label="Changer de thème" title="Thème clair / sombre">🌙</button>
+        </div>
+      </header>
+
+      <!-- TABLEAU DE BORD -->
+      <section class="view active" id="dashboardView">
+        <div id="welcomeBox"></div>
+        <div class="cards-grid" id="dashboardCards"></div>
+        <div class="grid-2">
+          <div class="panel">
+            <div class="panel-header"><h3>Alertes prioritaires</h3><button class="link-btn" data-goto="alerts">Tout voir →</button></div>
+            <div id="dashAlerts" class="stack-list"></div>
+          </div>
+          <div class="panel">
+            <div class="panel-header"><h3>Valeur du stock par famille</h3></div>
+            <div id="familyStats" class="stack-list"></div>
+          </div>
+        </div>
+        <div class="grid-2">
+          <div class="panel">
+            <div class="panel-header"><h3>Entrées / sorties (6 derniers mois)</h3></div>
+            <div id="monthChart"></div>
+          </div>
+          <div class="panel">
+            <div class="panel-header"><h3>Derniers mouvements</h3><button class="link-btn" data-goto="movements">Tout voir →</button></div>
+            <div class="table-wrap"><table class="rt"><thead><tr><th>Date</th><th>Type</th><th>Article</th><th class="num">Qté</th><th class="num">Valeur</th></tr></thead><tbody id="recentBody"></tbody></table></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ARTICLES -->
+      <section class="view" id="articlesView">
+        <div class="panel">
+          <div class="panel-header between">
+            <h3>Articles</h3>
+            <button class="primary-btn" data-action="new-article">+ Nouvel article</button>
+          </div>
+          <div class="toolbar">
+            <input type="search" id="articleSearch" placeholder="Rechercher code, désignation, famille, code-barres…" />
+            <select id="articleFamilyFilter"><option value="">Toutes les familles</option></select>
+            <select id="articleStatusFilter">
+              <option value="active">Articles actifs</option>
+              <option value="alert">En alerte</option>
+              <option value="archived">Archivés</option>
+              <option value="all">Tous</option>
+            </select>
+          </div>
+          <div class="table-wrap">
+            <table class="rt">
+              <thead><tr><th>Code</th><th>Désignation</th><th>Famille</th><th>Unité</th><th class="num">Qté</th><th class="num">CUMP</th><th class="num">Valeur</th><th class="num">Min</th><th>Statut</th><th></th></tr></thead>
+              <tbody id="articlesBody"></tbody>
+              <tfoot id="articlesFoot"></tfoot>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- ENTREES / SORTIES / INVENTAIRES (formulaires générés par JS) -->
+      <section class="view" id="entriesView"><div class="panel" id="entryPanel"></div></section>
+      <section class="view" id="exitsView"><div class="panel" id="exitPanel"></div></section>
+      <section class="view" id="inventoriesView"><div class="panel" id="inventoryPanel"></div></section>
+
+      <!-- MOUVEMENTS -->
+      <section class="view" id="movementsView">
+        <div class="panel">
+          <div class="panel-header between"><h3>Historique des mouvements</h3><span class="muted" id="movementCount"></span></div>
+          <div class="toolbar">
+            <input type="search" id="movementSearch" placeholder="Référence, article, tiers, commentaire…" />
+            <select id="movementTypeFilter"><option value="">Tous les types</option><option value="entry">Entrées</option><option value="exit">Sorties</option><option value="inventory">Inventaires</option></select>
+            <label class="inline-field">Du <input type="date" id="movementFrom" /></label>
+            <label class="inline-field">Au <input type="date" id="movementTo" /></label>
+          </div>
+          <div class="table-wrap tall">
+            <table class="rt">
+              <thead><tr><th>Date</th><th>Référence</th><th>Type</th><th>Article</th><th class="num">Qté</th><th class="num">Coût unit.</th><th class="num">Valeur</th><th class="num">Stock après</th><th class="num">CUMP</th><th>Tiers / Commentaire</th><th></th></tr></thead>
+              <tbody id="movementsBody"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- ALERTES & SEUILS -->
+      <section class="view" id="alertsView">
+        <div class="panel">
+          <div class="panel-header between"><h3>Alertes en cours</h3><span class="muted" id="alertsCount"></span></div>
+          <div id="alertsList" class="stack-list"></div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-header between">
+            <h3>Configuration manuelle des seuils</h3>
+            <div class="actions-inline">
+              <button class="secondary-btn" id="thresholdsResetBtn" disabled>Annuler les modifications</button>
+              <button class="primary-btn" id="thresholdsSaveBtn" disabled>Enregistrer les seuils</button>
+            </div>
+          </div>
+          <p class="hint"><b>Minimum</b> : en dessous, alerte <i>critique</i>. <b>Point de commande</b> : à ce niveau (ou en dessous), l'article passe « À commander ». <b>Maximum</b> : au-dessus, alerte « Surstock ». <b>Qté de réappro</b> : quantité commandée par lot (sert à la suggestion de commande). Laisser <b>0</b> pour désactiver un seuil.</p>
+
+          <div class="bulk-box">
+            <strong>Appliquer en masse</strong>
+            <select id="bulkFamily"><option value="">Tous les articles</option></select>
+            <select id="bulkField">
+              <option value="minStock">Minimum</option>
+              <option value="reorderPoint">Point de commande</option>
+              <option value="maxStock">Maximum</option>
+              <option value="reorderQty">Qté de réappro</option>
+            </select>
+            <input type="number" id="bulkValue" min="0" step="any" inputmode="decimal" placeholder="Valeur" />
+            <label class="check"><input type="checkbox" id="bulkOnlyEmpty" checked /> Seulement si non défini</label>
+            <button class="secondary-btn" id="bulkApplyBtn">Appliquer</button>
+          </div>
+
+          <div class="toolbar">
+            <input type="search" id="thresholdSearch" placeholder="Rechercher un article…" />
+            <select id="thresholdFamily"><option value="">Toutes les familles</option></select>
+            <label class="check"><input type="checkbox" id="thresholdOnlyAlert" /> Seulement les articles en alerte</label>
+          </div>
+          <div class="table-wrap tall">
+            <table class="rt">
+              <thead><tr><th>Code</th><th>Désignation</th><th class="num">Stock actuel</th><th>Minimum</th><th>Pt de commande</th><th>Maximum</th><th>Qté réappro</th><th>Statut</th></tr></thead>
+              <tbody id="thresholdsBody"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-header"><h3>Règles globales</h3></div>
+          <form id="rulesForm" class="form-grid">
+            <div>
+              <label for="ruleDormant">Alerte « Sans mouvement » après (jours)</label>
+              <input type="number" id="ruleDormant" min="0" max="3650" step="1" inputmode="numeric" />
+              <small class="hint">0 = désactivée. Concerne les articles en stock qui n'ont aucun mouvement depuis ce délai.</small>
+            </div>
+            <div class="form-actions"><button type="submit" class="primary-btn">Enregistrer</button></div>
+          </form>
+        </div>
+      </section>
+
+      <!-- ETATS & EXPORTS -->
+      <section class="view" id="reportsView">
+        <div class="panel">
+          <div class="panel-header"><h3>Générer un état</h3></div>
+          <div class="form-grid">
+            <div><label for="reportType">État</label>
+              <select id="reportType">
+                <option value="stockAtDate">État de stock à une date</option>
+                <option value="period">État de stock sur une période</option>
+                <option value="stockCard">Fiche de stock d'un article</option>
+                <option value="journal">Journal des mouvements</option>
+                <option value="reorder">Articles à réapprovisionner</option>
+                <option value="abc">Analyse ABC</option>
+                <option value="families">Valorisation par famille</option>
+                <option value="alerts">Alertes de stock</option>
+              </select></div>
+            <div id="reportParams" class="params-row"></div>
+          </div>
+          <div class="form-actions"><button class="primary-btn" id="reportRunBtn">Générer l'état</button></div>
+        </div>
+
+        <div class="panel" id="reportResult">
+          <div class="panel-header between">
+            <h3 id="reportTitle">Résultat</h3>
+            <div class="actions-inline export-btns">
+              <button class="secondary-btn" data-export="xlsx" disabled>📗 Excel</button>
+              <button class="secondary-btn" data-export="docx" disabled>📘 Word</button>
+              <button class="secondary-btn" data-export="pdf" disabled>📕 PDF</button>
+              <button class="secondary-btn" id="printBtn" disabled>🖨 Imprimer</button>
+            </div>
+          </div>
+          <p class="hint" id="reportSubtitle">Choisissez un état ci-dessus puis cliquez sur « Générer ».</p>
+          <div class="table-wrap tall"><table class="rt" id="reportTable"><thead id="reportHead"></thead><tbody id="reportBody"></tbody><tfoot id="reportFoot"></tfoot></table></div>
+          <div id="reportSummary" class="summary-box"></div>
+        </div>
+
+        <div class="panel no-print">
+          <div class="panel-header"><h3>Dossier de stock complet</h3></div>
+          <p class="hint">Un seul fichier avec sommaire : état de stock, valorisation par famille, alertes, réapprovisionnement et analyse ABC.</p>
+          <div class="form-grid"><div><label for="bundleDate">À la date du</label><input type="date" id="bundleDate" /></div>
+            <div class="actions-inline align-end">
+              <button class="secondary-btn" data-bundle="xlsx">📗 Excel</button>
+              <button class="secondary-btn" data-bundle="docx">📘 Word</button>
+              <button class="secondary-btn" data-bundle="pdf">📕 PDF</button>
+            </div></div>
+        </div>
+      </section>
+
+      <!-- PARAMETRES -->
+      <section class="view" id="settingsView">
+        <div class="grid-2">
+          <div class="panel">
+            <div class="panel-header"><h3>Société</h3></div>
+            <p class="hint">Ces informations apparaissent en en-tête des exports Excel, Word et PDF.</p>
+            <form id="companyForm" class="form-grid one">
+              <div><label for="companyName">Nom de la société</label><input type="text" id="companyName" autocomplete="organization" /></div>
+              <div><label for="companyAddress">Adresse</label><input type="text" id="companyAddress" /></div>
+              <div><label for="companyPhone">Téléphone</label><input type="text" id="companyPhone" inputmode="tel" /></div>
+              <div class="form-actions"><button class="primary-btn" type="submit">Enregistrer</button></div>
+            </form>
+          </div>
+
+          <div class="panel">
+            <div class="panel-header"><h3>Affichage (cet appareil)</h3></div>
+            <div class="form-grid one">
+              <div>
+                <label for="scaleRange">Taille de l'affichage : <b id="scaleLabel">100 %</b></label>
+                <input type="range" id="scaleRange" min="70" max="150" step="5" />
+                <small class="hint">Réglage propre à cet appareil (PC, tablette ou téléphone). Les boutons A− / A+ du haut font la même chose.</small>
+              </div>
+              <div class="actions-inline">
+                <button class="secondary-btn" id="scaleResetBtn">Taille par défaut</button>
+                <button class="secondary-btn" id="themeBtn2">Basculer clair / sombre</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-header"><h3>Règles métier</h3></div>
+          <form id="settingsForm" class="form-grid">
+            <div><label for="settingDecimals">Décimales des montants</label><select id="settingDecimals"><option value="2">2</option><option value="3">3 (dinar tunisien)</option></select></div>
+            <div><label for="settingQtyDecimals">Décimales max. des quantités</label><select id="settingQtyDecimals"><option value="0">0</option><option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option></select></div>
+            <div><label for="settingCurrency">Devise affichée</label><input type="text" id="settingCurrency" maxlength="8" /></div>
+            <div><label for="settingNegativeMode">Sortie supérieure au stock</label><select id="settingNegativeMode"><option value="strict">Blocage strict</option><option value="alert">Autoriser avec alerte</option></select></div>
+            <div class="form-actions full"><button type="submit" class="primary-btn">Enregistrer les règles</button></div>
+          </form>
+        </div>
+
+        <div class="panel" id="syncPanel">
+          <div class="panel-header between"><h3>Synchronisation GitHub (PC · tablette · téléphone)</h3><span class="muted" id="syncStatusText">Non configurée</span></div>
+          <p class="hint">Les données sont <b>chiffrées sur l'appareil</b> avant d'être envoyées dans un dépôt GitHub <b>privé</b>. Le même réglage sur chaque appareil donne les mêmes données partout. Voir le guide <code>README.md</code> pour créer le dépôt et le jeton.</p>
+          <form id="syncForm" class="form-grid" autocomplete="off">
+            <div><label for="syncOwner">Propriétaire GitHub</label><input type="text" id="syncOwner" placeholder="ex. hamzaazeiz7-ctrl" autocapitalize="off" spellcheck="false" /></div>
+            <div><label for="syncRepo">Dépôt de données (privé)</label><input type="text" id="syncRepo" placeholder="ex. stockflow-data" autocapitalize="off" spellcheck="false" /></div>
+            <div><label for="syncBranch">Branche (facultatif)</label><input type="text" id="syncBranch" placeholder="main" autocapitalize="off" spellcheck="false" /></div>
+            <div><label for="syncPath">Fichier</label><input type="text" id="syncPath" placeholder="stockflow-data.json" autocapitalize="off" spellcheck="false" /></div>
+            <div><label for="syncToken">Jeton GitHub (accès au dépôt de données)</label><input type="password" id="syncToken" autocomplete="off" placeholder="github_pat_…" /></div>
+            <div><label for="syncPass">Phrase secrète de chiffrement</label><input type="password" id="syncPass" autocomplete="new-password" placeholder="La même sur tous les appareils" /></div>
+            <div class="checks full">
+              <label class="check"><input type="checkbox" id="syncRemember" /> Mémoriser la phrase secrète sur cet appareil</label>
+              <label class="check"><input type="checkbox" id="syncAuto" /> Synchronisation automatique</label>
+            </div>
+            <div class="form-actions full">
+              <button type="submit" class="primary-btn">Enregistrer</button>
+              <button type="button" class="secondary-btn" id="syncTestBtn">Tester la connexion</button>
+              <button type="button" class="secondary-btn" id="syncNowBtn">Synchroniser maintenant</button>
+              <button type="button" class="ghost-btn" id="syncForgetBtn">Oublier cette configuration</button>
+            </div>
+          </form>
+          <div id="syncLog" class="hint"></div>
+        </div>
+
+        <div class="grid-2">
+          <div class="panel">
+            <div class="panel-header"><h3>Données</h3></div>
+            <div class="stack-list">
+              <button class="secondary-btn" id="exportJsonBtn">⬇ Sauvegarde complète (JSON)</button>
+              <label class="secondary-btn file-btn">⬆ Restaurer une sauvegarde (JSON)<input type="file" id="importJsonInput" accept="application/json,.json" hidden /></label>
+              <button class="ghost-btn" id="seedDemoBtn">Charger les données de démonstration</button>
+              <button class="danger-btn" id="resetAppBtn">Tout réinitialiser</button>
+            </div>
+          </div>
+          <div class="panel">
+            <div class="panel-header"><h3>Journal d'audit</h3></div>
+            <div class="table-wrap short"><table class="rt"><thead><tr><th>Date</th><th>Action</th><th>Détail</th></tr></thead><tbody id="auditBody"></tbody></table></div>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <nav class="bottom-nav" id="bottomNav" aria-label="Accès rapide">
+    <button data-view="dashboard"><span class="ico">🏠</span>Accueil</button>
+    <button data-view="articles"><span class="ico">📦</span>Articles</button>
+    <button data-view="entries"><span class="ico">⬇️</span>Entrée</button>
+    <button data-view="exits"><span class="ico">⬆️</span>Sortie</button>
+    <button data-view="alerts"><span class="ico">🔔</span>Alertes<span class="nav-badge" id="alertBadgeBottom" hidden>0</span></button>
+    <button id="bottomMenuBtn"><span class="ico">☰</span>Menu</button>
+  </nav>
+
+  <datalist id="articleList"></datalist>
+  <datalist id="familyList"></datalist>
+  <datalist id="supplierList"></datalist>
+
+  <!-- Fiche article -->
+  <dialog id="articleDialog">
+    <form method="dialog" id="articleForm" class="dialog-form">
+      <div class="dialog-head"><h3 id="articleDialogTitle">Nouvel article</h3><button class="icon-btn" type="button" data-close="articleDialog" aria-label="Fermer">✕</button></div>
+      <input type="hidden" id="articleId" />
+      <div class="form-grid">
+        <div><label for="articleCode">Code article *</label><input type="text" id="articleCode" required autocapitalize="characters" /></div>
+        <div><label for="articleName">Désignation *</label><input type="text" id="articleName" required /></div>
+        <div><label for="articleFamily">Famille *</label><input type="text" id="articleFamily" list="familyList" required /></div>
+        <div><label for="articleUnit">Unité</label><input type="text" id="articleUnit" placeholder="u, kg, m, l…" /></div>
+        <div><label for="articleBarcode">Code-barres</label><input type="text" id="articleBarcode" inputmode="numeric" /></div>
+        <div><label for="articleLocation">Emplacement</label><input type="text" id="articleLocation" placeholder="Rayon, allée, dépôt…" /></div>
+        <div><label for="articleSupplier">Fournisseur habituel</label><input type="text" id="articleSupplier" list="supplierList" /></div>
+        <div></div>
+        <div><label for="articleInitialQty">Quantité initiale</label><input type="number" id="articleInitialQty" min="0" step="any" inputmode="decimal" /></div>
+        <div><label for="articleInitialCost">Coût unitaire initial</label><input type="number" id="articleInitialCost" min="0" step="any" inputmode="decimal" /></div>
+        <div><label for="articleInitialValue">Valeur initiale</label><input type="text" id="articleInitialValue" readonly /></div>
+        <div></div>
+        <div><label for="articleMinStock">Stock minimum</label><input type="number" id="articleMinStock" min="0" step="any" inputmode="decimal" /></div>
+        <div><label for="articleReorderPoint">Point de commande</label><input type="number" id="articleReorderPoint" min="0" step="any" inputmode="decimal" /></div>
+        <div><label for="articleMaxStock">Stock maximum</label><input type="number" id="articleMaxStock" min="0" step="any" inputmode="decimal" /></div>
+        <div><label for="articleReorderQty">Qté de réappro</label><input type="number" id="articleReorderQty" min="0" step="any" inputmode="decimal" /></div>
+      </div>
+      <p class="form-error" id="articleError" role="alert"></p>
+      <div class="dialog-actions"><button class="secondary-btn" type="button" data-close="articleDialog">Annuler</button><button class="primary-btn" type="submit">Enregistrer l'article</button></div>
+    </form>
+  </dialog>
+
+  <!-- Modification d'un mouvement -->
+  <dialog id="movementDialog">
+    <form method="dialog" id="movementForm" class="dialog-form">
+      <div class="dialog-head"><h3 id="movementDialogTitle">Modifier le mouvement</h3><button class="icon-btn" type="button" data-close="movementDialog" aria-label="Fermer">✕</button></div>
+      <input type="hidden" id="mvId" />
+      <p class="hint" id="mvArticleInfo"></p>
+      <div class="form-grid">
+        <div><label for="mvDate">Date *</label><input type="date" id="mvDate" required /></div>
+        <div><label for="mvReference">Référence *</label><input type="text" id="mvReference" required /></div>
+        <div><label for="mvQty" id="mvQtyLabel">Quantité *</label><input type="number" id="mvQty" min="0" step="any" inputmode="decimal" required /></div>
+        <div id="mvCostWrap"><label for="mvCost">Coût unitaire *</label><input type="number" id="mvCost" min="0" step="any" inputmode="decimal" /></div>
+        <div><label for="mvParty">Tiers</label><input type="text" id="mvParty" list="supplierList" /></div>
+        <div><label for="mvComment">Commentaire</label><input type="text" id="mvComment" /></div>
+      </div>
+      <p class="form-error" id="mvError" role="alert"></p>
+      <div class="dialog-actions"><button class="secondary-btn" type="button" data-close="movementDialog">Annuler</button><button class="primary-btn" type="submit">Enregistrer</button></div>
+    </form>
+  </dialog>
+
+  <!-- Conflit de synchronisation -->
+  <dialog id="conflictDialog">
+    <div class="dialog-form">
+      <div class="dialog-head"><h3>Données différentes sur GitHub</h3></div>
+      <p id="conflictText" class="hint"></p>
+      <div class="conflict-grid" id="conflictInfo"></div>
+      <div class="dialog-actions wrap">
+        <button class="secondary-btn" data-conflict="cancel">Annuler</button>
+        <button class="secondary-btn" data-conflict="remote">Prendre la version GitHub</button>
+        <button class="primary-btn" data-conflict="local">Garder cet appareil</button>
+      </div>
+      <p class="hint">Avant tout remplacement, une copie de sécurité de cet appareil est conservée.</p>
+    </div>
+  </dialog>
+
+  <!-- Phrase secrète -->
+  <dialog id="passDialog">
+    <form method="dialog" id="passForm" class="dialog-form">
+      <div class="dialog-head"><h3>Phrase secrète</h3></div>
+      <p class="hint">Saisissez la phrase secrète de chiffrement des données.</p>
+      <input type="password" id="passInput" autocomplete="off" />
+      <div class="dialog-actions"><button class="secondary-btn" type="button" data-close="passDialog">Annuler</button><button class="primary-btn" type="submit">Valider</button></div>
+    </form>
+  </dialog>
+
+  <div id="toastContainer" class="toast-container" aria-live="polite"></div>
+
+  <script src="js/core.js"></script>
+  <script src="js/sync.js"></script>
+  <script src="js/exports.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
